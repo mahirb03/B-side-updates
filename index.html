@@ -6,7 +6,12 @@
 <title>B-Side</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@300;400;500;600&family=Fraunces:opsz,wght@9..144,300;9..144,500&display=swap" rel="stylesheet">
+<!-- Loaded without blocking the first paint: a stylesheet in <head> holds
+     rendering until it answers, and inside the packaged app that request
+     can hang, leaving a black window over a perfectly healthy server. -->
+<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@300;400;500;600&family=Fraunces:opsz,wght@9..144,300;9..144,500&display=swap">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@300;400;500;600&family=Fraunces:opsz,wght@9..144,300;9..144,500&display=swap"></noscript>
 <style>
 :root{
   --pine:#2e4a3d;            /* the plinth - changed in settings */
@@ -123,6 +128,7 @@ body.has-art .ambient{opacity:.26}
 .stack{position:relative;display:flex;align-items:center;justify-content:center}
 .side{
   position:absolute;top:50%;
+  content-visibility:auto;
   width:min(84vw,66vmin);aspect-ratio:1;
   transform-origin:50% 50%;
   pointer-events:none;z-index:0;
@@ -2663,23 +2669,21 @@ function renderStatus(s){
 }
 
 /* ---------------- poll ---------------- */
-/* The server holds this request open until something actually changes, so a
-   new track lands on screen the moment it's noticed instead of up to three
-   seconds later. An older server that ignores ?v= just answers immediately,
-   and we fall back to a plain timer. */
-let stateV = 0, pollCtl = null, pollTimer = null, longPoll = true;
+/* A plain three-second poll. Holding the request open was quicker in theory,
+   but a parked connection starves the page's own images - WebKit only gives
+   a host a few at a time - and the window sat blank waiting for artwork. */
+let pollCtl = null, pollTimer = null;
 
 async function poll(){
   clearTimeout(pollTimer);
   if(pollCtl) pollCtl.abort();
   const ctl = pollCtl = new AbortController();
-  let wait = 0;
+  let wait = 3000;
   try{
     const demo = new URLSearchParams(location.search).get('demo') === '1';
-    const q = demo ? '?demo=1' : (longPoll && stateV ? '?v=' + stateV : '');
-    const r = await fetch('/api/state' + q, {cache:'no-store', signal: ctl.signal});
+    const r = await fetch('/api/state' + (demo ? '?demo=1' : ''),
+                          {cache:'no-store', signal: ctl.signal});
     const s = await r.json();
-    if(typeof s.v === 'number') stateV = s.v; else longPoll = false;
     lastState = s;
     renderWeather(s.weather);
     renderFootball(s.football);
@@ -2717,10 +2721,9 @@ async function poll(){
     if(e && e.name === 'AbortError') return;   // a newer poll took over
     $('statusText').textContent = 'server down';
     $('dot').classList.remove('live');
-    wait = 2000;
+    wait = 4000;
   }
-  if(pollCtl === ctl)
-    pollTimer = setTimeout(poll, wait || (longPoll ? 0 : 3000));
+  if(pollCtl === ctl) pollTimer = setTimeout(poll, wait);
 }
 poll();
 

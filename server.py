@@ -877,7 +877,7 @@ def spotify_now_playing():
         "https://api.spotify.com/v1/me/player?additional_types=track",
         headers={"Authorization": "Bearer " + token})
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=8) as r:
             if r.status == 204:          # nothing playing
                 return None
             raw = r.read().decode("utf-8")
@@ -1048,7 +1048,7 @@ def spotify_queue(limit=3):
         return []
     req = urllib.request.Request("https://api.spotify.com/v1/me/player/queue",
                                  headers={"Authorization": "Bearer " + token})
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with urllib.request.urlopen(req, timeout=8) as r:
         raw = r.read().decode("utf-8")
     j = json.loads(raw) if raw.strip() else {}
     out = []
@@ -2262,7 +2262,7 @@ def _genius(path):
     req = urllib.request.Request("https://api.genius.com" + path,
                                  headers={"Authorization": "Bearer " + token,
                                           "User-Agent": "desk-dashboard/1.0"})
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with urllib.request.urlopen(req, timeout=8) as r:
         return json.loads(r.read().decode("utf-8")).get("response") or {}
 
 
@@ -2431,7 +2431,7 @@ def _raw(name):
         url = (f"https://raw.githubusercontent.com/{base}/"
                f"{cfg('update_branch', 'main')}/{name}")
     req = urllib.request.Request(url, headers={"User-Agent": "B-Side/1.0"})
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with urllib.request.urlopen(req, timeout=8) as r:
         return r.read()
 
 
@@ -2466,11 +2466,8 @@ def update_check(force=False):
             mine = _here(name)
             if mine is None or _digest(remote) != _digest(mine):
                 out["files"].append(name)
-        try:                       # app.py ships beside the others for exactly this
-            if _here("app.py") and _digest(_raw("app.py")) != _digest(_here("app.py")):
-                out["needs_build"] = True
-        except Exception:
-            pass
+        # Whether app.py changed can't be checked from inside the frozen app,
+        # so the panel simply doesn't claim either way.
     except urllib.error.HTTPError as e:
         out = {"ok": False, "why": "private" if e.code in (403, 404) else str(e)}
     except Exception as e:
@@ -2595,7 +2592,7 @@ def _spotify_call(method, url, data=None):
     if data:
         hdr["Content-Type"] = "application/json"
     req = urllib.request.Request(url, method=method, data=data, headers=hdr)
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with urllib.request.urlopen(req, timeout=8) as r:
         raw = r.read().decode("utf-8")
         try:
             return r.status, (json.loads(raw) if raw.strip() else {})
@@ -2848,12 +2845,17 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     req = urllib.request.Request(
                         src, headers={"User-Agent": "desk-dashboard/1.0"})
-                    with urllib.request.urlopen(req, timeout=20) as r:
+                    with urllib.request.urlopen(req, timeout=8) as r:
                         cached = (r.read(),
                                   r.headers.get("Content-Type", "image/jpeg"))
                 except Exception as e:
                     log("art:", e)
-                    self._send(502, b"art fetch failed", "text/plain")
+                    # A 1x1 transparent gif: the image element settles now
+                    # rather than holding a connection while it retries.
+                    import base64
+                    self._send(200, base64.b64decode(
+                        "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"),
+                        "image/gif")
                     return
                 if len(_ART_CACHE) > 24:
                     _ART_CACHE.clear()
@@ -2868,17 +2870,6 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/state":
-            # ?v=<version> holds the request open until something moves, so a
-            # track change reaches the screen in milliseconds rather than
-            # whenever the next poll happens to come round.
-            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query or "")
-            try:
-                since = int((q.get("v") or ["0"])[0])
-            except ValueError:
-                since = 0
-            if since:
-                with STATE_CHANGED:
-                    STATE_CHANGED.wait_for(lambda: STATE_VERSION > since, timeout=25)
             s = get_state()
             s["v"] = STATE_VERSION
             s["server_time"] = datetime.now().isoformat()
