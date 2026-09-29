@@ -2227,6 +2227,26 @@ def modules_loop():
 _MODULES_STARTED = threading.Event()
 
 
+
+def update_loop():
+    """Look for a newer version now and then and let the dashboard mention it.
+    It never installs anything by itself - the person still presses the
+    button. The first look is delayed so it can't slow a cold start."""
+    time.sleep(45)
+    while True:
+        try:
+            if _repo():
+                got = update_check()
+                if got.get("ok") and got.get("files"):
+                    set_state(update={"files": got["files"]})
+                    log("update: available -", ", ".join(got["files"]))
+                else:
+                    set_state(update=None)
+        except Exception as e:
+            log("update:", e)
+        time.sleep(6 * 3600)
+
+
 def start_modules():
     """The app only knows about the original loops, so the panels start
     themselves when server.py is loaded. Safe to call more than once."""
@@ -2235,6 +2255,7 @@ def start_modules():
     _MODULES_STARTED.set()
     threading.Thread(target=modules_loop, daemon=True).start()
     threading.Thread(target=lyrics_loop, daemon=True).start()
+    threading.Thread(target=update_loop, daemon=True).start()
     log("modules: panels running")
 
 

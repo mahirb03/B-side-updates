@@ -343,7 +343,14 @@ body.compact .tonearm,
 body.compact .ring{display:none}
 
 /* ---------------------------------------------------------------- track */
-.track{max-width:36ch}
+/* Short titles sit in a narrow column under the deck, which reads well. Long
+   ones used to keep wrapping in that column until the whole thing scrolled -
+   so past a certain length the block is allowed to spread sideways instead,
+   and the very long ones step the type down a size. */
+.track{max-width:36ch;transition:max-width .3s ease}
+.track.wide{max-width:min(58ch,76vw)}
+.track.vwide{max-width:min(76ch,88vw)}
+.track.vwide .tk-title{font-size:clamp(16px,2.35vmin,25px)}
 .tk-title{
   font-family:var(--serif);
   font-weight:500;
@@ -581,6 +588,28 @@ body.goal-on .wrap{filter:brightness(.5);transition:filter .3s}
 .mod-go{display:inline-block;margin-top:8px;font-size:clamp(10px,1.2vmin,12px);color:var(--accent);cursor:pointer}
 .mod-go:hover{text-decoration:underline}
 .mod-go.relink{margin-top:0;font-size:inherit;opacity:1}
+
+/* Quietly offers a new version. Sits above the gear, dismissable, and never
+   installs anything without being asked. */
+.upbar{
+  position:fixed;left:16px;bottom:70px;z-index:40;
+  display:flex;align-items:center;gap:10px;
+  background:var(--bg-2);border:1px solid var(--line);
+  border-radius:999px;padding:7px 8px 7px 15px;
+  box-shadow:0 8px 24px rgba(0,0,0,.45);
+  font-size:12px;color:var(--ink-2);
+  -webkit-app-region:no-drag;
+  animation:upIn .35s ease both;
+}
+@keyframes upIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.upbar[hidden]{display:none}
+.upbar b{color:var(--ink);font-weight:500}
+.upbar button{
+  font:inherit;border:0;border-radius:999px;cursor:pointer;padding:5px 12px;
+  background:var(--ink);color:var(--bg);
+}
+.upbar button.no{background:none;color:var(--ink-3);padding:5px 8px}
+.upbar button.no:hover{color:var(--ink-2)}
 
 /* lyrics take the record's place rather than crowding a side rail */
 .lyr-btn{
@@ -1285,6 +1314,12 @@ body.compact.has-art .grooves{opacity:.35}
   </div>
 </div>
 
+<div class="upbar" id="upBar" hidden>
+  <span><b>Update available</b> <span id="upWhat"></span></span>
+  <button id="upNow">Install</button>
+  <button class="no" id="upLater" aria-label="Not now">&times;</button>
+</div>
+
 <div class="sheet" id="settings" hidden>
   <div class="sheet-box">
     <div class="sheet-head">
@@ -1601,6 +1636,17 @@ function setArt(url){
   }
 }
 
+/* Give a long title more room sideways rather than more lines. The thresholds
+   are eyeballed against the deck width - a title under about forty characters
+   already fits the narrow column comfortably. */
+function fitTitle(){
+  const el = $('tkTitle'), t = document.querySelector('.track');
+  if(!el || !t) return;
+  const n = (el.textContent || '').length;
+  t.classList.toggle('wide', n > 38);
+  t.classList.toggle('vwide', n > 68);
+}
+
 function renderTrack(np, crate){
   const key = np
     ? (np.artist + '|' + np.title + '|' + (np.art || '') + '|' + (np.requested_by || '') + '|' + (np.paused ? 'p' : ''))
@@ -1619,7 +1665,7 @@ function renderTrack(np, crate){
       // Nothing on: suggest something from your own shelf.
       document.body.classList.add('crate');
       $('tkReq').innerHTML = 'From the crate <span class="shuffle" id="shuffle" role="button" tabindex="0">another</span>';
-      $('tkTitle').textContent = crate.title;
+      $('tkTitle').textContent = crate.title; fitTitle();
       $('tkArtist').textContent = crate.artist + (crate.year ? ' · ' + crate.year : '');
       $('tkMeta').textContent = '';
       setArt(crate.art);
@@ -1632,7 +1678,7 @@ function renderTrack(np, crate){
       document.body.classList.remove('crate');
       if(lastTrack && lastTrack.title){
         $('tkReq').textContent = 'Last played';
-        $('tkTitle').textContent = lastTrack.title;
+        $('tkTitle').textContent = lastTrack.title; fitTitle();
         $('tkArtist').textContent = lastTrack.artist || '';
         $('tkMeta').innerHTML = '<button class="resume" id="resumeBtn">\u25b6 Resume on Spotify</button>';
         setArt(lastTrack.art || null);
@@ -1648,7 +1694,7 @@ function renderTrack(np, crate){
       }else{
         document.body.classList.remove('idle-last');
         $('tkReq').textContent = '';
-        $('tkTitle').textContent = 'Nothing on the platter';
+        $('tkTitle').textContent = 'Nothing on the platter'; fitTitle();
         $('tkArtist').textContent = 'Put a record on';
         $('tkMeta').textContent = '';
         setArt(null);
@@ -1660,7 +1706,7 @@ function renderTrack(np, crate){
 
   document.body.classList.add('playing');
   $('tkReq').textContent = np.requested_by ? 'Requested by ' + np.requested_by : '';
-  $('tkTitle').textContent = np.title || '—';
+  $('tkTitle').textContent = np.title || '—'; fitTitle();
   $('tkArtist').textContent = np.artist || '';
   $('tkMeta').textContent =
     (np.album || '') + (np.source === 'spotify' && np.album ? ' · Spotify' : '')
@@ -2094,6 +2140,44 @@ $('upApply').addEventListener('click', async () => {
   const j = await upPost('/api/update/apply');
   if(!j.ok){ upSay(j.message || 'Update failed.', true); return; }
   upSay('Restarting…', false);
+  if(window.pywebview && pywebview.api && pywebview.api.restart) pywebview.api.restart();
+  else location.reload();
+});
+
+/* A new version announces itself rather than waiting to be asked. Dismissing
+   is remembered against that exact set of files, so it stays quiet until
+   something genuinely newer turns up. */
+let upSeen = '';
+function upDismissed(sig){
+  try{ return localStorage.getItem('upSkip') === sig; }catch(e){ return false; }
+}
+function renderUpdate(u){
+  const bar = $('upBar');
+  if(!u || !u.files || !u.files.length){ bar.hidden = true; return; }
+  const sig = u.files.slice().sort().join(',');
+  if(upDismissed(sig)){ bar.hidden = true; return; }
+  if(sig !== upSeen){
+    upSeen = sig;
+    $('upWhat').textContent = '· ' + u.files.length
+      + (u.files.length === 1 ? ' file' : ' files');
+  }
+  bar.hidden = false;
+}
+$('upLater').addEventListener('click', () => {
+  try{ localStorage.setItem('upSkip', upSeen); }catch(e){}
+  $('upBar').hidden = true;
+});
+$('upNow').addEventListener('click', async () => {
+  $('upNow').textContent = 'Installing…';
+  $('upNow').disabled = true;
+  const j = await upPost('/api/update/apply');
+  if(!j.ok){
+    $('upWhat').textContent = '· ' + (j.message || 'failed');
+    $('upNow').textContent = 'Retry';
+    $('upNow').disabled = false;
+    return;
+  }
+  $('upNow').textContent = 'Restarting…';
   if(window.pywebview && pywebview.api && pywebview.api.restart) pywebview.api.restart();
   else location.reload();
 });
@@ -2709,6 +2793,7 @@ async function poll(){
     renderGigs(s.concerts);
     renderLyrics(s.lyrics);
     renderSides(s);
+    renderUpdate(s.update);
     const showQr = !!(s.guest_url && s.guest_ready);
     $('guest').hidden = !showQr;
     // Connected, but without queue permission: say so where the QR would be.
