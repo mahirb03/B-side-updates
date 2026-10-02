@@ -101,8 +101,9 @@ DEFAULTS = {
     "spotify_poll_seconds": 5,
     "sport": "soccer",
     "modules": {"sport": True, "history": True, "lyrics": False,
-                "notes": True, "concerts": False, "aotd": True},
-    "layout": {"left": ["clock", "weather", "qr"],
+                "notes": True, "concerts": False, "aotd": True,
+                "room": True, "playlists": True},
+    "layout": {"left": ["clock", "weather", "room", "playlists", "qr"],
                "right": ["sport", "history", "aotd", "concerts"]},
     "update_repo": "mahirb03/B-side-updates",   # the public mirror
     "update_branch": "main",
@@ -111,7 +112,23 @@ DEFAULTS = {
 }
 
 
+def _adopt_side_config():
+    """A config.json sitting beside the exe - the old Windows build kept it
+    there - is moved into the settings folder the first time we start, so
+    upgrading never silently drops the Tuya keys and tokens."""
+    if os.path.exists(CONFIG_PATH) or not getattr(sys, "frozen", False):
+        return
+    beside = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "config.json")
+    if os.path.exists(beside):
+        try:
+            import shutil
+            shutil.copyfile(beside, CONFIG_PATH)
+        except Exception:
+            pass
+
+
 def load_config():
+    _adopt_side_config()
     cfg_ = dict(DEFAULTS)
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -167,8 +184,16 @@ STATE = {
     "spotify_paused": None,
     "notes": None,
     "queue": [],
+    "ac": None,
+    "ac_error": None,
+    "lamps": [],
+    "st_needs_login": False,
 }
 _ART_CACHE = {}
+
+# One identify at a time - the mic can't serve two callers.
+IDENTIFYING = threading.Event()
+_CAN_IDENTIFY = None   # worked out on first ask
 
 # Set to cut the listener's wait short — e.g. the moment Spotify pauses.
 WAKE_LISTEN = threading.Event()
@@ -217,6 +242,10 @@ def public_settings():
         "setup_done": bool(CFG.get("setup_done")),
         "always_on_top": bool(CFG.get("always_on_top")),
         "update_repo": CFG.get("update_repo", ""),
+        # the three picks: uri, name, cover - nothing secret
+        "playlists": [{"uri": p.get("uri", ""), "name": p.get("name", ""),
+                       "image": p.get("image", "")}
+                      for p in (CFG.get("playlists") or [])[:3]],
     }
 WAKE_SPOTIFY = threading.Event()   # set after a play/pause/volume press
 
@@ -765,10 +794,12 @@ def football_loop():
 
 SPOTIFY_SCOPES = ("user-read-currently-playing user-read-playback-state "
                   "user-modify-playback-state "
-                  "user-read-recently-played user-top-read user-library-read")
+                  "user-read-recently-played user-top-read user-library-read "
+                  "playlist-read-private playlist-read-collaborative")
 STATS_SCOPES = ("user-read-recently-played", "user-top-read")
 LIBRARY_SCOPE = "user-library-read"
 QUEUE_SCOPE = "user-modify-playback-state"
+PLAYLIST_SCOPE = "playlist-read-private"
 TOKEN_PATH = os.path.join(USER_DIR, "spotify_token.json")
 _pkce = {}
 
@@ -943,6 +974,88 @@ def load_last_track():
             set_state(last_track=json.load(f))
     except Exception:
         pass
+
+
+_PL_CACHE = {"at": 0, "items": []}
+
+def spotify_playlists(force=False):
+    """Your playlists, for the settings picker. Kept ten minutes - the list
+    barely changes, and the picker asks every time it opens."""
+    if PLAYLIST_SCOPE not in (_load_tokens().get("scope") or ""):
+        return {"ok": False, "why": "scope"}
+    if not force and _PL_CACHE["items"] and time.time() - _PL_CACHE["at"] < 600:
+        return {"ok": True, "items": _PL_CACHE["items"]}
+    items, url = [], "https://api.spotify.com/v1/me/playlists?limit=50"
+    try:
+        while url and len(items) < 300:
+            _, j = _spotify_call("GET", url)
+            for p in (j.get("items") or []):
+                if not p:
+                    continue
+                imgs = p.get("images") or []
+                items.append({
+                    "uri": p.get("uri", ""),
+                    "name": p.get("name", ""),
+                    "owner": ((p.get("owner") or {}).get("display_name") or ""),
+                    "tracks": ((p.get("tracks") or {}).get("total") or 0),
+                    # the smallest that's still crisp at 48px on a 2x screen
+                    "image": (imgs[-1] if len(imgs) == 1 else (imgs[1] if len(imgs) > 1 else {})).get("url", "")
+                             if imgs else "",
+                })
+            url = j.get("next")
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "why": "reconnect" if e.code in (401, 403) else str(e.code)}
+    except Exception as e:
+        return {"ok": False, "why": str(e)}
+    _PL_CACHE.update(at=time.time(), items=items)
+    # Keep the saved picks' covers current - a playlist's mosaic changes
+    # whenever its first few songs do.
+    picks = CFG.get("playlists") or []
+    fresh = {p["uri"]: p for p in items}
+    if any(fresh.get(p.get("uri"), {}).get("image", p.get("image")) != p.get("image") for p in picks):
+        save_config({"playlists": [dict(p, image=fresh.get(p.get("uri"), {}).get("image", p.get("image")))
+                                   for p in picks]})
+    return {"ok": True, "items": items}
+
+
+def play_playlist(uri, shuffle=False):
+    """Start a playlist, in order or shuffled. Spotify's own shuffle still
+    opens on track one, so a shuffled start jumps to a random track too."""
+    if not uri.startswith("spotify:playlist:"):
+        return False, "That isn't a playlist."
+    base = "https://api.spotify.com/v1/me/player"
+    body = {"context_uri": uri}
+    if shuffle:
+        total = next((p["tracks"] for p in _PL_CACHE["items"] if p["uri"] == uri), 0)
+        if not total:
+            try:
+                _, j = _spotify_call("GET", "https://api.spotify.com/v1/playlists/"
+                                     + uri.split(":")[-1] + "?fields=tracks.total")
+                total = (j.get("tracks") or {}).get("total") or 0
+            except Exception:
+                total = 0
+        if total > 1:
+            import random
+            body["offset"] = {"position": random.randrange(total)}
+    def set_shuffle():
+        try:
+            _spotify_call("PUT", f"{base}/shuffle?state={'true' if shuffle else 'false'}", data=b"")
+        except Exception:
+            pass                      # no device yet - tried again after play
+    set_shuffle()
+    try:
+        _spotify_call("PUT", base + "/play", data=json.dumps(body).encode())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False, "Open Spotify on a device first."
+        if e.code == 403:
+            return False, "Spotify won't allow that (it needs Premium)."
+        if e.code == 401:
+            return False, "Reconnect Spotify."
+        return False, f"Spotify said no ({e.code})."
+    set_shuffle()                     # now there's surely an active device
+    WAKE_SPOTIFY.set()
+    return True, ""
 
 
 def spotify_resume(uri=""):
@@ -1681,6 +1794,37 @@ def open_player(service):
     return True, ""
 
 
+_WEB_POS = {"key": None, "ms": 0, "dur": 0, "at": 0.0, "playing": None}
+
+def _borrow_position(track):
+    """Fill progress_ms / duration_ms from the Spotify web API. Asks at most
+    every ten seconds (and straight away on a new song); in between it runs
+    the clock forward itself, which is all the page does anyway."""
+    key = (track.get("title") or "").strip().lower()
+    now = time.time()
+    playing = bool(track.get("is_playing", True))
+    if (key != _WEB_POS["key"] or now - _WEB_POS["at"] > 10
+            or playing != _WEB_POS["playing"]):        # pause/resume: re-read now
+        try:
+            api = spotify_now_playing()
+        except Exception as e:
+            api = None
+            log("spotify web (position):", e)
+        if api and (api.get("title") or "").strip().lower() == key and api.get("duration_ms"):
+            _WEB_POS.update(key=key, ms=int(api.get("progress_ms") or 0),
+                            dur=int(api["duration_ms"]), at=now, playing=playing)
+        elif key != _WEB_POS["key"]:
+            _WEB_POS.update(key=None)
+            return
+    if _WEB_POS["key"] != key:
+        return
+    ms = _WEB_POS["ms"]
+    if playing:
+        ms += int((now - _WEB_POS["at"]) * 1000)
+    track["duration_ms"] = _WEB_POS["dur"]
+    track["progress_ms"] = min(ms, _WEB_POS["dur"])
+
+
 def player_loop():
     """Follow whichever app the person chose, every couple of seconds."""
     load_last_track()
@@ -1702,6 +1846,13 @@ def player_loop():
                     track = spotify_now_playing()
                 except Exception as e:
                     log("spotify web:", e)
+
+            # Spotify's Windows app names the song to the system but often
+            # leaves position and length at zero - so no lyric line can light
+            # up and the arm can't travel. Borrow them from the web API.
+            if (track and not track.get("duration_ms") and service == "spotify"
+                    and _load_tokens().get("refresh_token")):
+                _borrow_position(track)
 
             if service == "spotify":
                 granted = _load_tokens().get("scope", "")
@@ -1764,6 +1915,1139 @@ def player_loop():
             pass
         if WAKE_SPOTIFY.wait(nap_for):
             WAKE_SPOTIFY.clear()
+
+
+import socket  # WiZ bulbs talk straight to the LAN
+
+# ------------------------------------------------------------------- mic
+
+def clean_clip(audio, rate, np):
+    """Strip low-frequency rumble and normalise level.
+
+    A laptop mic a few feet from the speakers picks up far more desk and fan
+    rumble than music. Fingerprinting keys off mid-range spectral peaks, so
+    the bass has to go before the clip is worth sending anywhere.
+    """
+    x = np.asarray(audio, dtype=np.float32).flatten()
+    if x.size == 0:
+        return x
+
+    spec = np.fft.rfft(x)
+    freq = np.fft.rfftfreq(x.size, 1.0 / rate)
+
+    # Roll off below 150 Hz rather than cutting a hole in the spectrum.
+    ramp = np.clip((freq - 60.0) / 180.0, 0.0, 1.0) ** 2
+    spec *= ramp
+    # Nothing musical up there, and it's where mic hiss lives.
+    spec[freq > 15000.0] = 0.0
+
+    y = np.fft.irfft(spec, n=x.size).astype(np.float32)
+
+    peak = float(np.max(np.abs(y))) if y.size else 0.0
+    if peak > 1e-6:
+        y = y * (0.89 / peak)
+    return y
+
+
+def to_wav_bytes(samples, rate, np):
+    import io
+    import wave as _wave
+    pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with _wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm.tobytes())
+    return buf.getvalue()
+
+
+# Records a short clip from the mic, sends it to AudD, stores the match.
+
+class ConfigError(RuntimeError):
+    """Something the user has to fix: a missing package, a dead token."""
+
+
+def shazam_recognize(wav_bytes):
+    """Identify a clip via Shazam's own catalogue.
+
+    Uses shazamio, which reverse-engineers the Shazam app's API. No key and
+    no quota, but it is unofficial: if Shazam changes something it can stop
+    working, and there's nobody to complain to.
+    """
+    import asyncio
+
+    try:
+        from shazamio import Shazam
+    except ImportError:
+        raise ConfigError("Run: pip install shazamio")
+
+    async def go():
+        return await Shazam().recognize(wav_bytes)
+
+    # The clip just finished recording, so "now" is where the clip ended.
+    ended_at = time.time()
+
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        data = loop.run_until_complete(go())
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass
+        asyncio.set_event_loop(None)
+
+    track = (data or {}).get("track") or {}
+    if not track:
+        return None
+
+    album = ""
+    try:
+        for section in (track.get("sections") or []):
+            for row in (section.get("metadata") or []):
+                if (row.get("title") or "").lower() == "album":
+                    album = row.get("text", "")
+                    break
+            if album:
+                break
+    except Exception:
+        pass
+
+    art = ""
+    try:
+        imgs = track.get("images") or {}
+        art = imgs.get("coverarthq") or imgs.get("coverart") or ""
+    except Exception:
+        pass
+
+    out = {
+        "title": track.get("title", ""),
+        "artist": track.get("subtitle", ""),
+        "album": album,
+        "art": art,
+        "ts": time.time(),
+        "source": "shazam",
+    }
+    # Where in the song the clip was, and how long the song is, so the
+    # tonearm can move and the next listen can wait for the song to end.
+    try:
+        off = float(((data.get("matches") or [{}])[0]).get("offset") or 0)
+        clip = float(cfg("listen_clip_seconds", 7))
+        dur = track_length_ms(out["artist"], out["title"])
+        if off > 0 and dur:
+            pos = (off + clip) * 1000
+            if pos < dur:
+                out.update(duration_ms=dur, progress_ms=int(pos), progress_at=ended_at)
+    except Exception as e:
+        log(f"listen: couldn't place the needle ({e})")
+    return out
+
+
+_LEN_CACHE = {}
+
+def track_length_ms(artist, title):
+    """Song length from Spotify's catalogue, falling back to Apple's."""
+    key = (artist + "|" + title).lower()
+    if key in _LEN_CACHE:
+        return _LEN_CACHE[key]
+    first = (artist or "").split(",")[0].split("&")[0].split(" feat")[0].strip()
+    ms = 0
+    try:
+        q = urllib.parse.quote(f"track:{title} artist:{first}")
+        _, j = _spotify_call("GET", f"https://api.spotify.com/v1/search?type=track&limit=1&q={q}")
+        items = (j.get("tracks") or {}).get("items") or []
+        if items:
+            ms = int(items[0].get("duration_ms") or 0)
+    except Exception:
+        pass
+    if not ms:
+        try:
+            q = urllib.parse.quote(f"{first} {title}")
+            req = urllib.request.Request(f"https://itunes.apple.com/search?entity=song&limit=1&term={q}",
+                                         headers={"User-Agent": "desk-dashboard/1.0"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                res = json.loads(r.read().decode()).get("results") or []
+            if res:
+                ms = int(res[0].get("trackTimeMillis") or 0)
+        except Exception:
+            pass
+    _LEN_CACHE[key] = ms
+    return ms
+
+
+def recognize(wav_bytes):
+    """Run whichever recognizer the config asks for.
+
+    'shazam'  - Shazam only (free, unofficial)
+    'audd'    - AudD only (needs a paid or trial token)
+    'both'    - Shazam first, AudD as a backstop
+    """
+    mode = (cfg("recognizer", "shazam") or "shazam").lower()
+    token = cfg("audd_token")
+
+    if mode == "audd":
+        if not token:
+            raise ConfigError("No AudD token set")
+        return audd_recognize(wav_bytes, token)
+
+    result = shazam_recognize(wav_bytes)
+    if result or mode != "both":
+        return result
+
+    if token:
+        return audd_recognize(wav_bytes, token)
+    return None
+
+
+def _audio_libs():
+    import numpy as np
+    import sounddevice as sd
+    return np, sd
+
+
+def can_identify():
+    """True when a click could actually name a record: the audio libraries are
+    installed and some recognizer is reachable. Worked out once - importing
+    sounddevice is slow, and the answer doesn't change while we're running."""
+    global _CAN_IDENTIFY
+    if _CAN_IDENTIFY is None:
+        try:
+            _audio_libs()
+            mode = (cfg("recognizer", "shazam") or "shazam").lower()
+            if mode == "audd" and not cfg("audd_token"):
+                _CAN_IDENTIFY = False
+            else:
+                _CAN_IDENTIFY = True
+        except Exception:
+            _CAN_IDENTIFY = False
+    return _CAN_IDENTIFY
+
+
+def identify_now():
+    """Record one clip and ask AudD what it is. Returns (result, note)."""
+    try:
+        np, sd = _audio_libs()
+    except ImportError:
+        return None, "Run: pip install sounddevice numpy"
+
+    rate = 44100
+    clip = cfg("listen_clip_seconds", 12)
+    device = cfg("mic_device", None)
+    threshold = cfg("silence_threshold", 0.004)
+    stamp = datetime.now().strftime("%H:%M")
+
+    audio = sd.rec(int(clip * rate), samplerate=rate,
+                   channels=1, dtype="float32", device=device)
+    sd.wait()
+
+    level = float(np.sqrt(np.mean(np.square(audio))))
+    if level < threshold:
+        return None, f"too quiet ({level:.4f}) at {stamp}"
+
+    wav = to_wav_bytes(clean_clip(audio, rate, np), rate, np)
+    result = recognize(wav)               # raises on auth/quota trouble
+    if result:
+        return result, f"matched at {stamp}"
+    return None, f"no match at {stamp}"
+
+
+def listen_loop():
+    try:
+        _listen_loop()
+    except Exception as e:
+        set_state(listen_error=f"listener stopped: {e}", listening=False)
+        log("listen: THREAD DIED:", repr(e))
+
+
+def _listen_loop():
+    if not cfg("listen", False):
+        print("listen: click-to-identify mode")
+        return
+
+    mode = (cfg("recognizer", "shazam") or "shazam").lower()
+    if mode == "audd" and not cfg("audd_token"):
+        set_state(listen_error="No AudD token in config.json")
+        print("listen: no audd_token, skipping")
+        return
+
+    try:
+        import numpy as np
+        import sounddevice as sd
+    except ImportError:
+        set_state(listen_error="Run: pip install sounddevice numpy")
+        print("listen: pip install sounddevice numpy")
+        return
+
+    import io
+    import wave
+
+    interval = cfg("listen_interval_seconds", 45)
+    clip = cfg("listen_clip_seconds", 12)
+    device = cfg("mic_device", None)
+    threshold = cfg("silence_threshold", 0.004)
+    forget = cfg("forget_after_minutes", 8)
+    # Seconds. Short enough that a track change isn't stale for long,
+    # long enough not to re-identify the same song constantly.
+    recheck = cfg("recheck_after_seconds", 45)
+    rate = 44100
+
+    set_state(listening=True)
+    log(f"listen: on, every {interval}s, {clip}s clips, device={device}, "
+        f"recognizer={mode}")
+
+    while True:
+        try:
+            # Spotify knows better than the mic ever will.
+            if get_state().get("spotify_playing"):
+                nap(interval)
+                continue
+
+            set_state(listen_note="listening\u2026")
+            audio = sd.rec(int(clip * rate), samplerate=rate,
+                           channels=1, dtype="float32", device=device)
+            sd.wait()
+
+            level = float(np.sqrt(np.mean(np.square(audio))))
+            stamp = datetime.now().strftime("%H:%M")
+
+            # Something is already identified and still recent: a track runs
+            # for minutes, so there's no sense asking again every pass.
+            if level >= threshold:
+                cur = get_state().get("now_playing")
+                if cur:
+                    left = recheck - (time.time() - cur.get("ts", 0))
+                    if cur.get("duration_ms") and cur.get("progress_at") and cur.get("ts"):
+                        ends = cur["progress_at"] + (cur["duration_ms"] - cur["progress_ms"]) / 1000
+                        left = min(ends + 4 - time.time(), 15 * 60)
+                    if left > 0:
+                        mins, secs = divmod(int(left), 60)
+                        when = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
+                        set_state(listen_note=f"playing \u00b7 recheck in {when}")
+                        nap(interval)
+                        continue
+
+            if level < threshold:
+                # A silent pass means the side ended or the needle moved:
+                # drop the hold so the next sound is identified at once.
+                cur0 = get_state().get("now_playing")
+                if cur0:
+                    cur0 = dict(cur0); cur0["ts"] = 0
+                    set_state(now_playing=cur0)
+                set_state(listen_note=f"quiet ({level:.4f}) at {stamp}")
+                # Room is quiet. Let the record fall off after a while.
+                np_now = get_state().get("now_playing")
+                if np_now:
+                    age = time.time() - np_now.get("ts", 0)
+                    if age > forget * 60:
+                        set_state(now_playing=None)
+                nap(interval)
+                continue
+
+            wav = to_wav_bytes(clean_clip(audio, rate, np), rate, np)
+
+            try:
+                result = recognize(wav)
+            except ConfigError as e:
+                # Something the user has to fix. Say so and back off.
+                set_state(listen_error=str(e), listen_note="")
+                log("listen:", e)
+                time.sleep(max(interval, 300))
+                continue
+            except Exception as e:
+                # A network blip is not a reason to stop listening.
+                short = str(e).split("\n")[0][:60] or type(e).__name__
+                set_state(listen_note=f"retrying \u2014 {short}", listen_error=None)
+                log("listen: transient:", e)
+                time.sleep(interval)
+                continue
+
+            if get_state().get("spotify_playing"):
+                continue
+
+            if result:
+                remember_track(result)
+                set_state(now_playing=result, listen_error=None,
+                          listen_note=f"matched at {stamp}")
+                extra = ""
+                if result.get("duration_ms"):
+                    extra = f" [{result['progress_ms'] // 1000}s of {result['duration_ms'] // 1000}s]"
+                log("heard:", result["artist"], "-", result["title"] + extra)
+            else:
+                set_state(listen_note=f"no match at {stamp}", listen_error=None)
+                log(f"listen: heard audio ({level:.4f}) but no match")
+        except ConfigError as e:
+            set_state(listen_error=str(e), listen_note="")
+            log("listen:", e)
+            time.sleep(max(interval, 300))
+            continue
+        except Exception as e:
+            short = str(e).split("\n")[0][:60] or type(e).__name__
+            set_state(listen_note=f"retrying \u2014 {short}", listen_error=None)
+            log("listen: transient:", e)
+        nap(interval)
+
+def audd_recognize(wav_bytes, token):
+    """POST the clip to AudD as multipart/form-data. Returns a dict or None."""
+    boundary = "----deskdash" + str(int(time.time() * 1000))
+    parts = []
+
+    def field(name, value):
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            .encode("utf-8"))
+
+    field("api_token", token)
+    field("return", "apple_music,spotify")
+    parts.append(
+        f"--{boundary}\r\n"
+        "Content-Disposition: form-data; name=\"file\"; filename=\"clip.wav\"\r\n"
+        "Content-Type: audio/wav\r\n\r\n".encode("utf-8"))
+    parts.append(wav_bytes)
+    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    body = b"".join(parts)
+
+    req = urllib.request.Request(
+        "https://api.audd.io/",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(req, timeout=40) as r:
+        j = json.loads(r.read().decode("utf-8"))
+
+    if j.get("status") == "error":
+        err = (j.get("error") or {})
+        raise ConfigError(
+            f"AudD {err.get('error_code', '?')}: {err.get('error_message', 'unknown')}")
+    if not j.get("result"):
+        return None
+    res = j["result"]
+    album = res.get("album") or ""
+    art = ""
+    try:
+        am = res.get("apple_music") or {}
+        art = (am.get("artwork", {}).get("url") or "").replace("{w}", "600").replace("{h}", "600")
+        if not album:
+            album = am.get("albumName", "")
+    except Exception:
+        pass
+    if not art:
+        try:
+            sp = res.get("spotify") or {}
+            imgs = sp.get("album", {}).get("images", [])
+            if imgs:
+                art = imgs[0].get("url", "")
+            if not album:
+                album = sp.get("album", {}).get("name", "")
+        except Exception:
+            pass
+    return {
+        "title": res.get("title", ""),
+        "artist": res.get("artist", ""),
+        "album": album,
+        "art": art,
+        "ts": time.time(),
+        "source": "mic",
+    }
+
+
+# --------------------------------------------------------------------- ac
+# Tuya cloud (Smart Life). The AC is a virtual remote on the IR blaster.
+TUYA_HOSTS = {"in": "https://openapi.tuyain.com", "eu": "https://openapi.tuyaeu.com",
+              "us": "https://openapi.tuyaus.com", "cn": "https://openapi.tuyacn.com"}
+_TUYA = {"token": "", "exp": 0, "ir": "", "remote": "", "name": ""}
+_TUYA_LOCK = threading.Lock()
+AC_MODES = ["cool", "heat", "auto", "fan", "dry"]
+AC_FANS = ["auto", "low", "mid", "high"]
+
+
+def _tuya_req(method, path, body=None, token=True):
+    import hashlib, hmac, uuid
+    t = cfg("tuya") or {}
+    cid, secret = t.get("access_id", ""), t.get("access_secret", "")
+    if not cid or not secret:
+        raise ConfigError("Tuya isn't set up")
+    host = TUYA_HOSTS.get(t.get("region", "in"), TUYA_HOSTS["in"])
+    raw = json.dumps(body).encode() if body is not None else b""
+    tok = _tuya_token() if token else ""
+    ts, nonce = str(int(time.time() * 1000)), uuid.uuid4().hex
+    to_sign = "\n".join([method, hashlib.sha256(raw).hexdigest(), "", path])
+    sign = hmac.new(secret.encode(), (cid + tok + ts + nonce + to_sign).encode(),
+                    hashlib.sha256).hexdigest().upper()
+    headers = {"client_id": cid, "sign": sign, "t": ts, "nonce": nonce,
+               "sign_method": "HMAC-SHA256", "Content-Type": "application/json"}
+    if tok:
+        headers["access_token"] = tok
+    req = urllib.request.Request(host + path, data=raw if body is not None else None,
+                                 method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=20) as r:
+        j = json.loads(r.read().decode("utf-8"))
+    if not j.get("success"):
+        code, msg = j.get("code"), j.get("msg", "")
+        if code in (1010, 1011):                 # token expired / invalid
+            _TUYA["exp"] = 0
+        if code == 28841002 or "expire" in msg.lower():
+            raise ConfigError("Tuya trial expired: renew it on iot.tuya.com")
+        raise ConfigError(f"Tuya: {msg} ({code})")
+    return j.get("result")
+
+
+def _tuya_token():
+    if _TUYA["token"] and time.time() < _TUYA["exp"]:
+        return _TUYA["token"]
+    r = _tuya_req("GET", "/v1.0/token?grant_type=1", token=False)
+    _TUYA["token"] = r["access_token"]
+    _TUYA["exp"] = time.time() + int(r.get("expire_time", 3600)) - 120
+    return _TUYA["token"]
+
+
+def tuya_find_ac():
+    """Walk the linked devices, ask each IR hub for its remotes, keep the AC."""
+    if _TUYA["remote"]:
+        return True
+    devs = []
+    try:
+        r = _tuya_req("GET", "/v2.0/cloud/thing/device?page_size=20")
+        devs = r if isinstance(r, list) else (r or {}).get("list", [])
+    except ConfigError as e:
+        log(f"ac: device list failed ({e}), trying the older endpoint")
+        r = _tuya_req("GET", "/v1.0/iot-01/associated-users/devices?size=50")
+        devs = (r or {}).get("devices", [])
+    log("ac: devices " + ", ".join(f"{d.get('name')}[{d.get('category')}]" for d in devs))
+    # Newer Smart Life setups list the AC as its own device ("infrared_ac"):
+    # its id is the remote id, and the IR hub ("wnykq") is the one it sits on.
+    hubs = [d for d in devs if d.get("category") == "wnykq"]
+    for d in devs:
+        nm = (d.get("name") or "").lower()
+        if d.get("category") == "infrared_ac" or (
+                d.get("category") in ("qt", "infrared_ac") and
+                ("air" in nm or re.search(r"\bac\b", nm))):
+            hub = d.get("gateway_id") or d.get("parent_id") or (hubs[0]["id"] if hubs else "")
+            if hub:
+                _TUYA.update(ir=hub, remote=d.get("id"), name=d.get("name") or "AC")
+                log(f"ac: using {_TUYA['name']} on hub {hub}")
+                return True
+    fallback = None
+    for d in devs:
+        did = d.get("id")
+        try:
+            remotes = _tuya_req("GET", f"/v2.0/infrareds/{did}/remotes") or []
+            log(f"ac: remotes on {d.get('name')}: {str(remotes)[:300]}")
+            if isinstance(remotes, dict):
+                remotes = remotes.get("list") or remotes.get("remotes") or []
+        except Exception as e:
+            log(f"ac: remotes on {d.get('name')} failed: {e}")
+            continue
+        for rm in remotes:
+            log(f"ac: hub {d.get('name')} has remote {rm.get('remote_name')} cat {rm.get('category_id')}")
+            cand = (did, rm.get("remote_id"), rm.get("remote_name") or "AC")
+            if str(rm.get("category_id")) == "5" or "ac" in cand[2].lower() or "air" in cand[2].lower():
+                _TUYA.update(ir=cand[0], remote=cand[1], name=cand[2])
+                return True
+            fallback = fallback or cand
+    if fallback:
+        _TUYA.update(ir=fallback[0], remote=fallback[1], name=fallback[2])
+        return True
+    return False
+
+
+def _dev_codes():
+    """Standard-instruction codes the AC device accepts, learned once."""
+    if "codes" not in _TUYA:
+        f = _tuya_req("GET", f"/v1.0/iot-03/devices/{_TUYA['remote']}/functions") or {}
+        _TUYA["codes"] = {x.get("code"): x for x in f.get("functions", [])}
+        log("ac: device codes " + ", ".join(f"{c}={v.get('values','')[:80]}" for c, v in _TUYA["codes"].items()))
+    return _TUYA["codes"]
+
+def _pick(codes, *names):
+    for n in names:
+        if n in codes:
+            return n
+    return None
+
+def _ir_try(method, variants):
+    """Tuya's IR API differs by version and region; try each, keep what works."""
+    order = variants
+    if _TUYA.get("ir_ver") is not None:
+        order = [variants[_TUYA["ir_ver"]]] + [v for i, v in enumerate(variants) if i != _TUYA["ir_ver"]]
+    last = None
+    for path, body in order:
+        try:
+            r = _tuya_req(method, path, body)
+            i = variants.index((path, body))
+            if _TUYA.get("ir_ver") != i:
+                log(f"ac: IR route works: {method} {path.split(_TUYA['ir'])[0]}…{path.split(_TUYA['remote'])[-1]}")
+            _TUYA["ir_ver"] = i
+            return r
+        except ConfigError as e:
+            last = e
+            if "(1108)" not in str(e) and "(1109)" not in str(e):
+                raise
+    raise last
+
+
+def ac_status():
+    # The IR route is what actually makes the blaster fire; prefer it.
+    if _TUYA.get("mode_api") != "dev":
+        try:
+            ir, rm = _TUYA['ir'], _TUYA['remote']
+            r = _ir_try("GET", [
+                (f"/v2.0/infrareds/{ir}/remotes/{rm}/ac/status", None),
+                (f"/v1.0/infrareds/{ir}/remotes/{rm}/ac/status", None),
+                (f"/v2.0/infrareds/{ir}/air-conditioners/{rm}/status", None),
+                (f"/v1.0/infrareds/{ir}/air-conditioners/{rm}/status", None),
+            ]) or {}
+            _TUYA["ir_ver"] = None       # status and control paths are counted separately
+            _TUYA["mode_api"] = "ir"
+            def n(k, d):
+                try: return int(r.get(k, d))
+                except Exception: return d
+            return {"power": n("power", 0) == 1, "temp": n("temp", 24),
+                    "mode": AC_MODES[n("mode", 0) % 5], "fan": AC_FANS[n("wind", 0) % 4],
+                    "name": _TUYA["name"]}
+        except ConfigError as e:
+            log(f"ac: IR api unavailable ({e})")
+            set_state(ac_error="Enable 'IR Control Hub Open Service' on iot.tuya.com")
+            _TUYA["mode_api"] = "dev-retry"
+    if _TUYA.get("mode_api") != "ir":
+        try:
+            codes = _dev_codes()
+            st = {x["code"]: x.get("value") for x in
+                  (_tuya_req("GET", f"/v1.0/iot-03/devices/{_TUYA['remote']}/status") or [])}
+            if _TUYA.get("mode_api") != "dev-retry": _TUYA["mode_api"] = "dev"
+            pw = _pick(st, "switch", "power", "switch_1")
+            tp = _pick(st, "temp", "temp_set", "T")
+            md = _pick(st, "mode", "M")
+            fn = _pick(st, "wind", "fan_speed_enum", "fan", "F")
+            def as_mode(v):
+                if isinstance(v, int) or str(v).isdigit(): return AC_MODES[int(v) % 5]
+                return str(v or "cool").lower()
+            def as_fan(v):
+                if isinstance(v, int) or str(v).isdigit(): return AC_FANS[int(v) % 4]
+                return str(v or "auto").lower()
+            pv = st.get(pw) if pw else (get_state().get("ac") or {}).get("power", False)
+            return {"power": pv in (True, 1, "1", "on", "true"),
+                    "temp": int(st.get(tp) or 24), "mode": as_mode(st.get(md)),
+                    "fan": as_fan(st.get(fn)), "name": _TUYA["name"]}
+        except ConfigError as e:
+            log(f"ac: device status failed ({e})")
+            raise
+    r = _tuya_req("GET", f"/v2.0/infrareds/{_TUYA['ir']}/remotes/{_TUYA['remote']}/ac/status") or {}
+    def num(k, d):
+        try: return int(r.get(k, d))
+        except Exception: return d
+    return {"power": num("power", 0) == 1, "temp": num("temp", 24),
+            "mode": AC_MODES[num("mode", 0) % 5], "fan": AC_FANS[num("wind", 0) % 4],
+            "name": _TUYA["name"]}
+
+
+def ac_control(action, value=None):
+    with _TUYA_LOCK:
+        try:
+            if not tuya_find_ac():
+                return False, "Couldn't find an AC on your IR blaster."
+            st = get_state().get("ac") or ac_status()
+            power, temp = st.get("power"), int(st.get("temp", 24))
+            mode, fan = st.get("mode", "cool"), st.get("fan", "auto")
+            if action == "power":
+                power = not power
+            elif action == "temp":
+                temp = max(16, min(30, temp + (1 if int(value) > 0 else -1)))
+                power = True
+            elif action == "mode":
+                mode = AC_MODES[(AC_MODES.index(mode) + 1) % 5] if value is None else value
+            elif action == "fan":
+                fan = AC_FANS[(AC_FANS.index(fan) + 1) % 4]
+            else:
+                return False, "Unknown control."
+            sent = False
+            try:
+                ir, rm = _TUYA['ir'], _TUYA['remote']
+                scene = {"power": 1 if power else 0, "mode": AC_MODES.index(mode),
+                         "temp": temp, "wind": AC_FANS.index(fan)}
+                _ir_try("POST", [
+                    (f"/v2.0/infrareds/{ir}/air-conditioners/{rm}/scenes", scene),
+                    (f"/v1.0/infrareds/{ir}/air-conditioners/{rm}/scenes", scene),
+                    (f"/v2.0/infrareds/{ir}/air-conditioners/{rm}/command",
+                     {"code": "power", "value": scene["power"]} if action == "power" else
+                     {"code": "temp", "value": temp} if action == "temp" else
+                     {"code": "mode", "value": scene["mode"]} if action == "mode" else
+                     {"code": "wind", "value": scene["wind"]}),
+                ])
+                sent = True
+            except ConfigError as e:
+                log(f"ac: IR send failed ({e}), trying device commands")
+            if not sent:
+                codes = _dev_codes()
+                cmds = []
+                def enc(code, word, idx):
+                    vals = str((codes.get(code) or {}).get("values", ""))
+                    if '"Integer"' in vals: return idx
+                    return word if f'"{word}"' in vals else idx
+                pw = _pick(codes, "switch", "power", "switch_1")
+                if "PowerOn" in codes and (action == "power" or not st.get("power")):
+                    k = "PowerOn" if power else "PowerOff"
+                    cmds.append({"code": k, "value": k})
+                elif pw and action == "power":
+                    typ = (codes[pw].get("type") or "").lower()
+                    cmds.append({"code": pw, "value": power if typ == "boolean" else (1 if power else 0)})
+                tp = _pick(codes, "temp", "temp_set", "T")
+                md = _pick(codes, "mode", "M")
+                fn = _pick(codes, "wind", "fan_speed_enum", "fan", "F")
+                if power:
+                    if tp and action == "temp": cmds.append({"code": tp, "value": temp})
+                    if md and action == "mode": cmds.append({"code": md, "value": enc(md, mode, AC_MODES.index(mode))})
+                    if fn and action == "fan": cmds.append({"code": fn, "value": enc(fn, fan, AC_FANS.index(fan))})
+                log(f"ac: sending {cmds}")
+                if not cmds:
+                    return False, "Turn the AC on first." if not power else "That control isn't supported."
+                _tuya_req("POST", f"/v1.0/iot-03/devices/{_TUYA['remote']}/commands", {"commands": cmds})
+            new = {"power": power, "temp": temp, "mode": mode, "fan": fan, "name": _TUYA["name"]}
+            set_state(ac=new, ac_error=None)
+            return True, ""
+        except ConfigError as e:
+            return False, str(e)
+        except Exception as e:
+            log(f"ac: control failed {e}")
+            return False, "Couldn't reach Tuya."
+
+
+# ---- soundbar: a plain IR remote ("Audio") on the same blaster
+_SB = {"id": "", "name": "", "keys": {}, "cat": None}
+
+def sb_find():
+    if _SB["id"]:
+        return True
+    r = _tuya_req("GET", "/v2.0/cloud/thing/device?page_size=20")
+    devs = r if isinstance(r, list) else (r or {}).get("list", [])
+    for d in devs:
+        nm = (d.get("name") or "").lower()
+        if d.get("category") in ("qt", "infrared_amplifier") and any(
+                w in nm for w in ("audio", "sound", "speaker", "amp")):
+            _SB.update(id=d["id"], name=d.get("name") or "Soundbar")
+            break
+    if not _SB["id"]:
+        return False
+    if not _TUYA["ir"]:
+        hubs = [d for d in devs if d.get("category") == "wnykq"]
+        _TUYA["ir"] = hubs[0]["id"] if hubs else ""
+    k = _tuya_req("GET", f"/v2.0/infrareds/{_TUYA['ir']}/remotes/{_SB['id']}/keys") or {}
+    _SB["cat"] = k.get("category_id")
+    _SB["keys"] = {x.get("key"): x for x in k.get("key_list", [])}
+    log("soundbar: keys " + ", ".join(_SB["keys"]))
+    return True
+
+def _sb_key(want):
+    keys = _SB["keys"]
+    norm = {re.sub(r"[^a-z+\-]", "", (k or "").lower()): k for k in keys}
+    table = {"power": ["power", "poweron", "on", "off"],
+             "vol_up": ["volume+", "vol+", "volumeup", "volup", "+"],
+             "vol_down": ["volume-", "vol-", "volumedown", "voldown", "-"],
+             "mute": ["mute"]}
+    for c in table.get(want, []):
+        if c in norm:
+            return norm[c]
+    for n, k in norm.items():                     # looser match
+        if want == "vol_up" and "vol" in n and ("up" in n or "+" in n): return k
+        if want == "vol_down" and "vol" in n and ("down" in n or "-" in n): return k
+    return None
+
+def sb_control(action):
+    with _TUYA_LOCK:
+        try:
+            if not sb_find():
+                return False, "Couldn't find the soundbar."
+            key = _sb_key(action)
+            if not key:
+                return False, "The soundbar remote has no key for that."
+            x = _SB["keys"][key]
+            _tuya_req("POST", f"/v2.0/infrareds/{_TUYA['ir']}/remotes/{_SB['id']}/command",
+                      {"category_id": _SB["cat"], "key_id": x.get("key_id"), "key": key})
+            return True, ""
+        except ConfigError as e:
+            log(f"soundbar: {e}")
+            return False, str(e)
+        except Exception as e:
+            log(f"soundbar: {e}")
+            return False, "Couldn't reach Tuya."
+
+
+# ---- smart bulbs (Tuya light categories)
+LIGHT_CATS = ("dj", "dd", "fwd", "xdd", "dc", "fsd", "tgq", "tgkg", "cz", "pc", "kg")
+_LAMPS = {}          # id -> {"name", "codes"}
+
+def lamps_find():
+    r = _tuya_req("GET", "/v2.0/cloud/thing/device?page_size=20")
+    devs = r if isinstance(r, list) else (r or {}).get("list", [])
+    for d in devs:
+        if d.get("category") in LIGHT_CATS and d["id"] not in _LAMPS:
+            f = _tuya_req("GET", f"/v1.0/iot-03/devices/{d['id']}/functions") or {}
+            codes = {x.get("code"): x for x in f.get("functions", [])}
+            _LAMPS[d["id"]] = {"name": d.get("name") or "Plug", "codes": codes,
+                               "plug": d.get("category") in ("cz", "pc", "kg")}
+            log(f"lamp: found {d.get('name')} [{d.get('category')}] codes {', '.join(codes)}")
+
+def _lc(codes, *names):
+    for n in names:
+        if n in codes: return n
+
+def _range(codes, code):
+    try:
+        v = json.loads(codes[code].get("values") or "{}")
+        return int(v.get("min", 10)), int(v.get("max", 1000))
+    except Exception:
+        return 10, 1000
+
+def lamps_status():
+    out = []
+    for lid, L in _LAMPS.items():
+        st = {x["code"]: x.get("value") for x in
+              (_tuya_req("GET", f"/v1.0/iot-03/devices/{lid}/status") or [])}
+        c = L["codes"]
+        sw = _lc(st, "switch_led", "switch_1", "switch")
+        br = _lc(c, "bright_value_v2", "bright_value")
+        tp = _lc(c, "temp_value_v2", "temp_value")
+        pct = None
+        if br and st.get(br) is not None:
+            lo, hi = _range(c, br); pct = round((int(st[br]) - lo) * 100 / max(1, hi - lo))
+        warm = None
+        if tp and st.get(tp) is not None:
+            lo, hi = _range(c, tp); warm = round((int(st[tp]) - lo) * 100 / max(1, hi - lo))
+        out.append({"id": lid, "name": L["name"], "on": bool(st.get(sw)),
+                    "bright": pct, "warmth": warm, "has_temp": bool(tp),
+                    "plug": L.get("plug", False), "online": True})
+    return out
+
+def lamp_control(lid, action, value=None):
+    if lid.startswith("st:"):
+        ok, msg = st_control(lid[3:], action, value)
+        if ok:
+            try: _merge_lamps("st:", st_status())
+            except Exception: pass
+        return ok, msg
+    if lid.startswith("wiz:"):
+        ok, msg = wiz_control(lid[4:], action, value)
+        if ok:
+            try:
+                set_state(lamps=wiz_status() + [l for l in (get_state().get("lamps") or [])
+                                                if not str(l.get("id", "")).startswith("wiz:")])
+            except Exception: pass
+        return ok, msg
+    with _TUYA_LOCK:
+        L = _LAMPS.get(lid)
+        if not L:
+            return False, "Lamp not found."
+        c = L["codes"]
+        cmds = []
+        try:
+            if action == "power":
+                sw = _lc(c, "switch_led", "switch_1", "switch")
+                cmds.append({"code": sw, "value": bool(value)})
+            elif action == "bright":
+                br = _lc(c, "bright_value_v2", "bright_value")
+                lo, hi = _range(c, br)
+                cmds += [{"code": _lc(c, "switch_led", "switch_1", "switch"), "value": True},
+                         {"code": br, "value": int(lo + (hi - lo) * max(0, min(100, int(value))) / 100)}]
+                if "work_mode" in c: cmds.insert(1, {"code": "work_mode", "value": "white"})
+            elif action == "warmth":
+                tp = _lc(c, "temp_value_v2", "temp_value")
+                lo, hi = _range(c, tp)
+                cmds.append({"code": tp, "value": int(lo + (hi - lo) * max(0, min(100, int(value))) / 100)})
+                if "work_mode" in c: cmds.insert(0, {"code": "work_mode", "value": "white"})
+            else:
+                return False, "Unknown control."
+            cmds = [x for x in cmds if x["code"]]
+            _tuya_req("POST", f"/v1.0/iot-03/devices/{lid}/commands", {"commands": cmds})
+            try: set_state(lamps=[l for l in (get_state().get("lamps") or [])
+                                  if str(l.get("id", "")).startswith("wiz:")] + lamps_status())
+            except Exception: pass
+            return True, ""
+        except ConfigError as e:
+            log(f"lamp: {e}"); return False, str(e)
+        except Exception as e:
+            log(f"lamp: {e}"); return False, "Couldn't reach Tuya."
+
+
+# ---- WiZ bulbs: local UDP on port 38899, no cloud
+import socket
+_WIZ = {}            # ip -> {"name", "mac"}
+WIZ_PORT = 38899
+
+def _wiz(ip, method, params=None, timeout=1.5):
+    msg = {"method": method, "params": params or {}}
+    sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sk.settimeout(timeout)
+    try:
+        for _ in range(2):                    # UDP: send twice, it's cheap
+            sk.sendto(json.dumps(msg).encode(), (ip, WIZ_PORT))
+            try:
+                data, _a = sk.recvfrom(2048)
+                return json.loads(data.decode()).get("result") or {}
+            except socket.timeout:
+                continue
+        return None
+    finally:
+        sk.close()
+
+def wiz_discover():
+    ips = set()
+    sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sk.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sk.settimeout(2.5)
+    try:
+        home = home_ip() or ""
+        targets = ["255.255.255.255"]
+        if home.count(".") == 3:
+            targets.append(home.rsplit(".", 1)[0] + ".255")
+        for t in targets:
+            try: sk.sendto(b'{"method":"getPilot","params":{}}', (t, WIZ_PORT))
+            except OSError: pass
+        end = time.time() + 2.5
+        while time.time() < end:
+            try:
+                data, (ip, _p) = sk.recvfrom(2048)
+                if b"result" in data: ips.add(ip)
+            except socket.timeout:
+                break
+    finally:
+        sk.close()
+    for ip in (cfg("wiz_ips") or []):      # manual fallback if broadcast is blocked
+        ips.add(ip)
+    for ip in ips:
+        if ip not in _WIZ:
+            info = _wiz(ip, "getSystemConfig") or {}
+            n = len(_WIZ) + 1
+            _WIZ[ip] = {"name": (cfg("wiz_names") or {}).get(ip) or ("Lamp" if n == 1 else f"Lamp {n}"),
+                        "mac": info.get("mac", "")}
+            log(f"wiz: found bulb at {ip} ({info.get('moduleName', '?')})")
+
+def wiz_status():
+    out = []
+    for ip, W in _WIZ.items():
+        p = _wiz(ip, "getPilot")
+        if p is None:
+            out.append({"id": "wiz:" + ip, "name": W["name"], "on": False, "bright": None,
+                        "warmth": None, "has_temp": True, "online": False})
+            continue
+        t = p.get("temp")
+        out.append({"id": "wiz:" + ip, "name": W["name"], "on": bool(p.get("state")),
+                    "bright": int(p.get("dimming", 100)),
+                    "warmth": round((6500 - int(t)) * 100 / 4300) if t else None,
+                    "has_temp": True, "online": True})
+    return out
+
+def wiz_control(ip, action, value):
+    if action == "power":
+        params = {"state": bool(value)}
+    elif action == "bright":
+        params = {"state": True, "dimming": max(10, min(100, int(value)))}
+    elif action == "warmth":        # 0 = cool 6500K, 100 = warm 2200K
+        params = {"state": True, "temp": int(6500 - 4300 * max(0, min(100, int(value))) / 100)}
+    else:
+        return False, "Unknown control."
+    r = _wiz(ip, "setPilot", params)
+    if r is None:
+        return False, "The lamp didn't answer. Is it switched on at the wall?"
+    return True, ""
+
+def wiz_loop():
+    last_scan = 0
+    while True:
+        try:
+            if time.time() - last_scan > (600 if _WIZ else 60):
+                wiz_discover(); last_scan = time.time()
+            if _WIZ:
+                set_state(lamps=wiz_status() + [l for l in (get_state().get("lamps") or [])
+                                                if not str(l.get("id", "")).startswith("wiz:")])
+        except Exception as e:
+            log(f"wiz: {e}")
+        time.sleep(20)
+
+
+# ---- SmartThings lights (WiZ etc. linked into SmartThings)
+_ST = {}             # id -> name
+ST_API = "https://api.smartthings.com/v1"
+
+ST_TOKENS = os.path.join(HERE, "st_tokens.json")
+ST_REDIRECT = "https://httpbin.org/get"
+ST_SCOPES = "r:devices:* x:devices:*"
+
+def _st_app():
+    a = cfg("smartthings_app") or {}
+    return a.get("client_id", ""), a.get("client_secret", "")
+
+def st_auth_url():
+    cid, _ = _st_app()
+    if not cid:
+        return ""
+    return ("https://api.smartthings.com/oauth/authorize?" + urllib.parse.urlencode(
+        {"client_id": cid, "response_type": "code", "redirect_uri": ST_REDIRECT, "scope": ST_SCOPES}))
+
+def _st_token_call(form):
+    import base64
+    cid, sec = _st_app()
+    form["client_id"] = cid
+    req = urllib.request.Request(
+        "https://auth-global.api.smartthings.com/oauth/token",
+        data=urllib.parse.urlencode(form).encode(), method="POST",
+        headers={"Authorization": "Basic " + base64.b64encode(f"{cid}:{sec}".encode()).decode(),
+                 "Content-Type": "application/x-www-form-urlencoded"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        j = json.loads(r.read().decode())
+    j["expires_at"] = time.time() + int(j.get("expires_in", 86399)) - 300
+    with open(ST_TOKENS, "w", encoding="utf-8") as f:
+        json.dump(j, f)
+    return j
+
+def st_exchange(code):
+    code = (code or "").strip()
+    m = re.search(r"code[\"'=:\s]+([A-Za-z0-9_\-]+)", code)   # accept the whole httpbin page too
+    if m: code = m.group(1)
+    try:
+        _st_token_call({"grant_type": "authorization_code", "code": code, "redirect_uri": ST_REDIRECT})
+    except urllib.error.HTTPError as e:
+        return False, "SmartThings didn't accept that code. Codes only work once, try Connect again."
+    _ST.clear()
+    set_state(st_needs_login=False)
+    return True, ""
+
+def _st_bearer():
+    try:
+        with open(ST_TOKENS, "r", encoding="utf-8") as f:
+            t = json.load(f)
+    except Exception:
+        t = None
+    if t and t.get("access_token"):
+        if time.time() < t.get("expires_at", 0):
+            return t["access_token"]
+        try:
+            return _st_token_call({"grant_type": "refresh_token",
+                                   "refresh_token": t["refresh_token"]})["access_token"]
+        except Exception as e:
+            log(f"smartthings: refresh failed {e}")
+    return cfg("smartthings_token") or ""
+
+def _st(method, path, body=None):
+    tok = _st_bearer()
+    if not tok:
+        raise ConfigError("no SmartThings token")
+    req = urllib.request.Request(ST_API + path, method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Authorization": "Bearer " + tok,
+                                          "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read().decode("utf-8")
+            return json.loads(raw) if raw.strip() else {}
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            if _st_app()[0]:
+                set_state(st_needs_login=True, st_auth_url=st_auth_url())
+                raise ConfigError("Reconnect SmartThings")
+            raise ConfigError("SmartThings token expired: make a new one")
+        raise
+
+def st_find():
+    j = _st("GET", "/devices")
+    for d in j.get("items", []):
+        caps = {c.get("id") for comp in d.get("components", []) for c in comp.get("capabilities", [])}
+        if "switch" in caps and d["deviceId"] not in _ST:
+            light = "switchLevel" in caps or "colorTemperature" in caps
+            cat = " ".join(c.get("name", "") for comp in d.get("components", [])
+                           for c in comp.get("categories", [])).lower()
+            if not light and not any(w in cat for w in ("plug", "outlet", "switch", "smartplug")):
+                continue
+            _ST[d["deviceId"]] = {"name": d.get("label") or d.get("name") or "Lamp",
+                                  "temp": "colorTemperature" in caps, "plug": not light}
+            log(f"smartthings: found {'light' if light else 'plug'} {_ST[d['deviceId']]['name']}")
+
+def st_status():
+    out = []
+    for did, D in _ST.items():
+        try:
+            m = (_st("GET", f"/devices/{did}/status").get("components") or {}).get("main", {})
+            on = (m.get("switch", {}).get("switch", {}) or {}).get("value") == "on"
+            lvl = (m.get("switchLevel", {}).get("level", {}) or {}).get("value")
+            k = (m.get("colorTemperature", {}).get("colorTemperature", {}) or {}).get("value")
+            out.append({"id": "st:" + did, "name": D["name"], "on": on,
+                        "bright": int(lvl) if lvl is not None else None,
+                        "warmth": round((6500 - int(k)) * 100 / 4300) if k else None,
+                        "has_temp": D["temp"], "plug": D.get("plug", False), "online": True})
+        except ConfigError:
+            raise
+        except Exception:
+            out.append({"id": "st:" + did, "name": D["name"], "on": False, "bright": None,
+                        "warmth": None, "has_temp": D["temp"], "online": False})
+    return out
+
+def st_control(did, action, value):
+    if action == "power":
+        cmds = [{"component": "main", "capability": "switch", "command": "on" if value else "off"}]
+    elif action == "bright":
+        cmds = [{"component": "main", "capability": "switchLevel", "command": "setLevel",
+                 "arguments": [max(1, min(100, int(value)))]}]
+    elif action == "warmth":
+        cmds = [{"component": "main", "capability": "colorTemperature", "command": "setColorTemperature",
+                 "arguments": [int(6500 - 4300 * max(0, min(100, int(value))) / 100)]}]
+    else:
+        return False, "Unknown control."
+    try:
+        _st("POST", f"/devices/{did}/commands", {"commands": cmds})
+        return True, ""
+    except ConfigError as e:
+        return False, str(e)
+    except Exception as e:
+        log(f"smartthings: {e}")
+        return False, "Couldn't reach SmartThings."
+
+def _merge_lamps(prefix, fresh):
+    keep = [l for l in (get_state().get("lamps") or []) if not str(l.get("id", "")).startswith(prefix)]
+    set_state(lamps=fresh + keep)
+
+def st_loop():
+    if not cfg("smartthings_token") and not _st_app()[0]:
+        return
+    if _st_app()[0] and not os.path.exists(ST_TOKENS):
+        set_state(st_needs_login=True, st_auth_url=st_auth_url())
+    last = 0
+    while True:
+        try:
+            if time.time() - last > 600 or not _ST:
+                st_find(); last = time.time()
+            if _ST:
+                _merge_lamps("st:", st_status())
+        except ConfigError as e:
+            log(f"smartthings: {e}")
+            set_state(ac_error=str(e)) if not get_state().get("ac") else None
+        except Exception as e:
+            log(f"smartthings: {e}")
+        time.sleep(20)
+
+
+def ac_loop():
+    if not (cfg("tuya") or {}).get("access_id"):
+        return
+    while True:
+        try:
+            with _TUYA_LOCK:
+                try:
+                    lamps_find()
+                    if _LAMPS:
+                        set_state(lamps=[l for l in (get_state().get("lamps") or [])
+                                         if str(l.get("id", "")).startswith("wiz:")] + lamps_status())
+                except Exception as e:
+                    log(f"lamp: {e}")
+                if tuya_find_ac():
+                    set_state(ac=ac_status(), ac_error=None)
+                else:
+                    set_state(ac=None, ac_error="No AC found on the IR blaster")
+                    log("ac: no AC remote found")
+        except ConfigError as e:
+            set_state(ac_error=str(e)); log(f"ac: {e}")
+        except Exception as e:
+            log(f"ac: {e}")
+        time.sleep(60)
 
 
 # --------------------------------------------------------------- modules
@@ -1928,10 +3212,11 @@ def history_stats():
 
     now = datetime.now()
     since = min((r["at"] for r in rows), default=time.time())
-    month_start = now.replace(day=1, hour=0, minute=0, second=0,
-                              microsecond=0).timestamp()
-    year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0,
-                             microsecond=0).timestamp()
+    # Rolling windows, all three. Calendar ones read as nonsense early in a
+    # month: on the 2nd, 'this month' was two days while 'this week' was
+    # seven, so the month showed fewer plays than the week.
+    month_start = time.time() - 30 * 86400
+    year_start = time.time() - 365 * 86400
 
     week = [r for r in rows if r["at"] > time.time() - 7 * 86400]
     month = [r for r in rows if r["at"] >= month_start]
@@ -1946,9 +3231,9 @@ def history_stats():
     # Widest period the log can honestly speak for, with a day of slack so a
     # fresh log doesn't claim the week either.
     spans = "week" if since <= time.time() - 6 * 86400 else "some"
-    if since <= month_start:
+    if since <= month_start + 86400:     # same day of slack as the week
         spans = "month"
-    if since <= year_start:
+    if since <= year_start + 86400:
         spans = "year"
 
     counts = {}
@@ -2247,6 +3532,13 @@ def update_loop():
         time.sleep(6 * 3600)
 
 
+def _has_room():
+    """True when this copy has been given any smart-home keys: Tuya, WiZ,
+    or SmartThings. A plain install has none and never touches the LAN."""
+    return bool((cfg("tuya") or {}).get("access_id")
+                or cfg("wiz") or cfg("smartthings_token") or _st_app()[0])
+
+
 def start_modules():
     """The app only knows about the original loops, so the panels start
     themselves when server.py is loaded. Safe to call more than once."""
@@ -2256,7 +3548,162 @@ def start_modules():
     threading.Thread(target=modules_loop, daemon=True).start()
     threading.Thread(target=lyrics_loop, daemon=True).start()
     threading.Thread(target=update_loop, daemon=True).start()
+    # The room half: the mic, the AC, and the bulbs. Each of these returns
+    # straight away when its section of config.json is absent, so a friend's
+    # copy with no Tuya keys simply never starts them.
+    # The room only wakes on a machine that's been set up for it. Without
+    # this a friend's Mac would scan the LAN for WiZ bulbs every minute and
+    # macOS would ask them about 'local network access' for no reason.
+    threading.Thread(target=listen_loop, daemon=True).start()   # gated on cfg('listen')
+    threading.Thread(target=crate_loop, daemon=True).start()    # gated on discogs_username
+    if _has_room():
+        for fn in (ac_loop, wiz_loop, st_loop):
+            threading.Thread(target=fn, daemon=True).start()
+        log("room: smart-home config found, looking for devices")
     log("modules: panels running")
+
+
+# ------------------------------------------------------------------ crate
+# A random record from your Discogs collection, shown on the idle platter.
+
+_CRATE = []
+
+
+def _discogs(url):
+    headers = {"User-Agent": "DeskDashboard/1.0"}
+    tok = cfg("discogs_token")
+    if tok:
+        headers["Authorization"] = "Discogs token=" + tok
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def load_crate(user):
+    """Every release in the collection's 'All' folder (folder 0)."""
+    out, page, pages = [], 1, 1
+    while page <= pages and page <= 40:
+        j = _discogs(f"https://api.discogs.com/users/{urllib.parse.quote(user)}"
+                     f"/collection/folders/0/releases?per_page=100&page={page}")
+        pages = int((j.get("pagination") or {}).get("pages") or 1)
+        for rel in j.get("releases") or []:
+            b = rel.get("basic_information") or {}
+            # Discogs disambiguates same-named artists as "Name (2)"; drop that.
+            artists = ", ".join(re.sub(r"\s\(\d+\)$", "", a.get("name", ""))
+                                for a in b.get("artists") or [])
+            out.append({
+                "title": b.get("title", ""),
+                "artist": artists,
+                "year": b.get("year") or "",
+                "art": b.get("cover_image") or b.get("thumb") or "",
+                "url": f"https://www.discogs.com/release/{b.get('id')}" if b.get("id") else "",
+            })
+        page += 1
+        time.sleep(2.5)      # unauthenticated limit is 25 requests a minute
+    return out
+
+
+COVER_CACHE = os.path.join(USER_DIR, "covers_cache.json")
+
+def _clean(t):
+    t = re.sub(r"\s*[\(\[][^)\]]*[\)\]]", "", t or "")   # (Remastered), [Deluxe] ...
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+def official_cover(artist, title):
+    """Studio artwork from Spotify, else Apple Music. '' if neither knows it."""
+    first = (artist or "").split(",")[0].strip()
+    want = _clean(title)
+    try:
+        q = urllib.parse.quote(f'album:{_clean(title)} artist:{first}')
+        _, j = _spotify_call("GET", f"https://api.spotify.com/v1/search?type=album&limit=5&q={q}")
+        items = (j.get("albums") or {}).get("items") or []
+        items.sort(key=lambda a: _clean(a.get("name")) != want)   # exact title first
+        for a in items:
+            if a.get("images"):
+                return a["images"][0]["url"]
+    except Exception:
+        pass
+    try:
+        q = urllib.parse.quote(f"{first} {_clean(title)}")
+        req = urllib.request.Request(
+            f"https://itunes.apple.com/search?entity=album&limit=5&term={q}",
+            headers={"User-Agent": "desk-dashboard/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            res = json.loads(r.read().decode("utf-8")).get("results") or []
+        res.sort(key=lambda a: _clean(a.get("collectionName")) != want)
+        for a in res:
+            if a.get("artworkUrl100"):
+                return a["artworkUrl100"].replace("100x100bb", "1000x1000bb")
+    except Exception:
+        pass
+    return ""
+
+def swap_covers(recs):
+    """Replace Discogs' user photos with official art, cached between runs."""
+    try:
+        with open(COVER_CACHE, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+    except Exception:
+        cache = {}
+    changed = False
+    for r in recs:
+        key = (r["artist"] + " | " + r["title"]).lower()
+        if not cache.get(key):                 # misses are retried next load
+            url = official_cover(r["artist"], r["title"])
+            time.sleep(0.3)
+            if url:
+                cache[key] = url
+                changed = True
+        if cache.get(key):
+            r["discogs_art"] = r["art"]
+            r["art"] = cache[key]
+    if changed:
+        try:
+            with open(COVER_CACHE, "w", encoding="utf-8") as f:
+                json.dump(cache, f)
+        except Exception:
+            pass
+    found = sum(1 for r in recs if r.get("discogs_art"))
+    log(f"crate: official covers for {found}/{len(recs)} records")
+    return recs
+
+
+def shuffle_crate():
+    import random
+    if _CRATE:
+        cur = (get_state().get("crate") or {}).get("title")
+        choices = [r for r in _CRATE if r["title"] != cur] or _CRATE
+        set_state(crate=random.choice(choices))
+
+
+def crate_loop():
+    user = cfg("discogs_username")
+    if not user:
+        log("crate: no discogs_username, skipping")
+        return
+    rotate = int(cfg("crate_rotate_minutes", 20)) * 60
+    loaded_at = 0
+    while True:
+        try:
+            if time.time() - loaded_at > 12 * 3600 or not _CRATE:
+                recs = load_crate(user)
+                if recs:
+                    _CRATE[:] = recs            # show something straight away
+                    recs = swap_covers([dict(r) for r in recs])
+                if recs:
+                    _CRATE[:] = recs
+                    loaded_at = time.time()
+                    log(f"crate: {len(recs)} records in {user}'s collection")
+                else:
+                    log(f"crate: {user}'s collection came back empty — is it set to public?")
+            shuffle_crate()
+        except urllib.error.HTTPError as e:
+            log("crate:", e.code, "— check discogs_username, and that the collection is public")
+            time.sleep(1800)
+            continue
+        except Exception as e:
+            log("crate:", e)
+        time.sleep(rotate)
 
 
 # ------------------------------------------------------------ liner notes
@@ -2890,6 +4337,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if path == "/api/crate":
+            self._send(200, json.dumps({"records": _CRATE}))
+            return
+
         if path == "/api/state":
             s = get_state()
             s["v"] = STATE_VERSION
@@ -2899,6 +4350,7 @@ class Handler(BaseHTTPRequestHandler):
             if (CFG.get("guest_queue") or {}).get("enabled"):
                 s["guest_url"] = guest_url()
             s["settings"] = public_settings()
+            s["can_identify"] = can_identify()
             self._send(200, json.dumps(s))
             return
         self._send(404, json.dumps({"error": "not found"}))
@@ -2913,6 +4365,61 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(raw.decode("utf-8") or "{}")
         except Exception:
             data = {}
+
+        if path == "/api/crate/shuffle":
+            shuffle_crate()
+            self._send(200, json.dumps({"ok": True, "crate": get_state().get("crate")}))
+            return
+
+        if path == "/api/ac":
+            ok, msg = ac_control(data.get("action"), data.get("value"))
+            self._send(200, json.dumps({"ok": ok, "message": msg,
+                                        "ac": get_state().get("ac")}))
+            return
+
+        if path == "/api/lamp":
+            ok, msg = lamp_control(str(data.get("id", "")), data.get("action"),
+                                   data.get("value"))
+            self._send(200, json.dumps({"ok": ok, "message": msg,
+                                        "lamps": get_state().get("lamps")}))
+            return
+
+        if path == "/api/st/code":
+            ok, msg = st_exchange(data.get("code"))
+            self._send(200, json.dumps({"ok": ok, "message": msg}))
+            return
+
+        if path == "/api/identify":
+            # One at a time: a second click while the mic is busy would record
+            # the same seven seconds twice and spend two lookups on it.
+            if IDENTIFYING.is_set():
+                self._send(200, json.dumps({"busy": True}))
+                return
+            IDENTIFYING.set()
+            set_state(identifying=True, listen_note="listening\u2026")
+            try:
+                result, note = identify_now()
+                if result:
+                    set_state(now_playing=result, listen_note=note, listen_error=None)
+                else:
+                    set_state(listen_note=note, listen_error=None)
+                self._send(200, json.dumps({"ok": True, "note": note}))
+            except Exception as e:
+                set_state(listen_error=str(e), listen_note="")
+                self._send(200, json.dumps({"ok": False, "error": str(e)}))
+            finally:
+                set_state(identifying=False)
+                IDENTIFYING.clear()
+            return
+
+        if path == "/api/playlists":
+            self._send(200, json.dumps(spotify_playlists(force=bool(data.get("force")))))
+            return
+
+        if path == "/api/playlists/play":
+            ok, msg = play_playlist(str(data.get("uri", "")), bool(data.get("shuffle")))
+            self._send(200, json.dumps({"ok": ok, "message": msg}))
+            return
 
         if path == "/api/soundbar":
             ok, msg = sb_control(data.get("action"))
@@ -2954,7 +4461,7 @@ class Handler(BaseHTTPRequestHandler):
             allowed = ("service", "colour", "place", "latitude", "longitude",
                        "country", "auto_location", "football", "guest_queue",
                        "setup_done", "always_on_top", "sport", "modules", "layout",
-                       "update_repo")
+                       "update_repo", "playlists")
             clean = {k: v for k, v in patch.items() if k in allowed}
             if clean.get("auto_location"):
                 got = locate()

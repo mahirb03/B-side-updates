@@ -86,7 +86,12 @@ body{
   }
   /* 1.22 = the plinth's overhang on both sides of the record */
 
-  .flank{width:100%;align-items:stretch;text-align:left}
+  .flank{width:100%;align-items:stretch;text-align:left;
+    /* never taller than the window: a long lamp list used to stretch the
+       grid row and push the clock off the bottom on a 150%-scaled screen */
+    max-height:calc(100vh - 8vmin);overflow-y:auto;scrollbar-width:none;
+    justify-content:safe center;overscroll-behavior:contain}
+  .flank::-webkit-scrollbar{display:none}
   .flank-l{justify-self:stretch;max-width:34ch}
   .flank-r{justify-self:end;max-width:34ch;width:100%}
   .centre{grid-column:2;order:0}
@@ -372,6 +377,174 @@ body.compact .ring{display:none}
 }
 body:not(.playing) .tk-title{color:var(--ink-3);font-weight:300}
 
+
+/* ------------------------------------------------------- room controls
+   The AC and the lamps, carried over from the Windows build. The colours
+   follow the plinth, so they restyle themselves when the turntable does. */
+.room{display:flex;flex-direction:column;align-items:center;gap:clamp(6px,1vmin,10px)}
+.room[hidden]{display:none}
+.pill{position:relative;display:flex;align-items:center;gap:clamp(3px,.6vmin,6px);
+  padding:clamp(3px,.5vmin,5px) clamp(10px,1.4vmin,14px) clamp(3px,.5vmin,5px) clamp(3px,.5vmin,5px);
+  border-radius:999px;background:linear-gradient(180deg,var(--pine-dark),var(--pine-darker));
+  box-shadow:inset 0 0 0 1px var(--pine-line);-webkit-app-region:no-drag}
+.pill[hidden]{display:none}
+.pill button{border:0;cursor:pointer;font:inherit;display:grid;place-items:center;padding:0}
+.pill button:focus-visible{outline:2px solid var(--pine-hi);outline-offset:2px}
+.ac-pw{width:clamp(24px,3.2vmin,30px);height:clamp(24px,3.2vmin,30px);border-radius:50%;
+  background:rgba(255,255,255,.08);color:var(--ink-3);transition:background .2s,color .2s}
+.ac-pw svg{width:45%;height:45%}
+.pill.on .ac-pw{background:var(--pine-hi);color:#0f1a14}
+.ac-b{width:clamp(20px,2.6vmin,24px);height:clamp(20px,2.6vmin,24px);border-radius:50%;
+  background:transparent;color:var(--ink-2)}
+.ac-b svg{width:11px;height:11px;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;fill:none;display:block}
+.ac-b:hover{background:rgba(255,255,255,.08);color:var(--ink)}
+.ac-temp{font-size:clamp(12px,1.6vmin,15px);font-variant-numeric:tabular-nums;
+  min-width:2.4em;text-align:center;color:var(--ink)}
+.pill:not(.on) .ac-temp{color:var(--ink-3)}
+.ac-tag{font-size:clamp(9px,1.1vmin,11px);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);background:transparent;padding:4px 6px!important;border-radius:999px}
+.ac-tag:hover{color:var(--ink);background:rgba(255,255,255,.06)}
+.room-msg{font-size:11px;color:#ff8a8d;text-align:center;min-height:0}
+.room-msg:empty{display:none}
+#lamps{display:flex;flex-direction:column;gap:clamp(6px,1vmin,10px);align-items:center}
+.lamp .lp{width:clamp(24px,3.2vmin,30px);height:clamp(24px,3.2vmin,30px);border-radius:50%;border:0;
+  cursor:pointer;display:grid;place-items:center;background:rgba(255,255,255,.08);color:var(--ink-3);
+  transition:background .2s,color .2s,box-shadow .2s}
+.lamp .lp svg{width:50%;height:50%}
+.lamp.on .lp{background:#f2c46b;color:#3a2a0c;box-shadow:0 0 14px rgba(242,196,107,.45)}
+.lamp.plug.on .lp{background:var(--pine-hi);color:#0f1a14;box-shadow:0 0 12px rgba(95,154,124,.45)}
+.lamp .ln{font-size:clamp(10px,1.2vmin,12px);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);max-width:7em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lamp input[type=range]{-webkit-appearance:none;appearance:none;width:clamp(70px,9vmin,110px);height:4px;
+  border-radius:2px;background:linear-gradient(90deg,var(--pine-hi) var(--v,50%),rgba(255,255,255,.14) var(--v,50%));
+  outline:none;cursor:pointer}
+.lamp input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;
+  border-radius:50%;background:var(--ink)}
+.lamp input:focus-visible{outline:2px solid var(--pine-hi);outline-offset:4px}
+.lamp:not(.on) input{opacity:.4}
+.lamp.gone{opacity:.45}
+.idf{font-size:clamp(9px,1.1vmin,11px);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);
+  background:transparent;border:1px solid var(--pine-line);border-radius:999px;padding:5px 12px;
+  cursor:pointer;-webkit-app-region:no-drag;transition:color .2s,border-color .2s}
+.idf:hover{color:var(--ink);border-color:var(--pine-hi)}
+.idf[disabled]{opacity:.5;cursor:default}
+.st-connect{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:center}
+.st-connect[hidden]{display:none}
+.st-connect input{font:inherit;font-size:12px;color:var(--ink);background:var(--bg-2);
+  border:1px solid var(--pine-line);border-radius:999px;padding:6px 10px;width:12em;outline:none}
+.st-connect .ac-tag{border:0;cursor:pointer;background:rgba(95,154,124,.15);color:var(--ink-2)}
+body.compact .room{display:none}
+
+/* ------------------------------------------------------------------ crate */
+.crate-btn[hidden]{display:none}
+.crate-btn{
+  position:fixed;left:66px;bottom:13px;z-index:15;
+  width:44px;height:44px;border-radius:12px;
+  display:grid;place-items:center;
+  background:rgba(255,255,255,.04);border:0;cursor:pointer;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);
+  -webkit-app-region:no-drag;transition:background .15s, transform .15s;
+}
+.crate-btn:hover{background:rgba(255,255,255,.09);transform:translateY(-1px)}
+.crate-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.crate-btn svg{width:26px;height:26px}
+.crate-btn .s1{fill:var(--accent);opacity:.75}
+.crate-btn .s2{fill:var(--ink-2)}
+.crate-btn .box{fill:#6b4a2b;stroke:#3b2816;stroke-width:1}
+.crate-btn .slot{stroke:#2a1c10;stroke-width:2;stroke-linecap:round}
+body.compact .crate-btn{display:none}
+
+.ac-msg{position:absolute;left:50%;transform:translateX(-50%);top:calc(100% + 4px);font-size:11px;color:#ff8a8d;white-space:nowrap}
+
+.crate{
+  position:fixed;inset:0;z-index:40;
+  display:grid;place-items:center;
+  background:rgba(8,7,6,.72);backdrop-filter:blur(8px);
+  animation:crateIn .2s ease-out;
+  -webkit-app-region:no-drag;
+}
+.crate[hidden]{display:none}
+@keyframes crateIn{from{opacity:0}to{opacity:1}}
+.crate-panel{
+  width:min(1180px, calc(100vw - 32px));
+  height:min(820px, calc(100vh - 48px));
+  display:flex;flex-direction:column;
+  background:#171412;border-radius:18px;
+  box-shadow:0 30px 80px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.07);
+  overflow:hidden;
+}
+.crate-head{
+  display:flex;align-items:center;gap:12px;
+  padding:18px 20px;border-bottom:1px solid var(--line);
+}
+.crate-head h2{font-family:var(--serif);font-weight:500;font-size:24px;letter-spacing:-.01em}
+.crate-count{font-size:12px;color:var(--ink-3);margin-top:2px}
+.crate-head > div:first-child{margin-right:auto}
+.crate-search{
+  font:inherit;font-size:14px;color:var(--ink);
+  background:var(--bg-2);border:1px solid var(--line);border-radius:999px;
+  padding:9px 14px;width:min(260px,30vw);outline:none;
+}
+.crate-search:focus{border-color:var(--ink-3)}
+.crate-shuffle{
+  font:500 14px/1 var(--sans);color:#141210;
+  background:var(--accent);border:0;border-radius:999px;
+  padding:10px 18px;cursor:pointer;
+}
+.crate-shuffle:hover{filter:brightness(1.1)}
+.crate-x{
+  width:38px;height:38px;border-radius:50%;border:0;cursor:pointer;
+  background:transparent;color:var(--ink-3);font-size:22px;line-height:1;
+}
+.crate-x:hover{background:var(--bg-2);color:var(--ink)}
+.crate-head button:focus-visible,.crate-search:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.crate-grid{
+  flex:1;overflow-y:auto;
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
+  gap:22px 18px;
+  padding:20px;
+  align-content:start;
+}
+.sleeve{
+  cursor:pointer;border:0;background:none;text-align:left;color:inherit;padding:0;
+  display:flex;flex-direction:column;gap:8px;
+}
+.sleeve .cv{
+  aspect-ratio:1;width:100%;border-radius:4px;object-fit:cover;display:block;
+  background:#221e1a;
+  box-shadow:0 6px 16px rgba(0,0,0,.45);
+  transition:transform .18s, box-shadow .18s;
+}
+.sleeve:hover .cv,.sleeve:focus-visible .cv{transform:translateY(-4px);box-shadow:0 12px 24px rgba(0,0,0,.55)}
+.sleeve:focus-visible{outline:none}
+.sleeve .t{font-size:13px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sleeve .a{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sleeve.lit .cv{box-shadow:0 0 0 3px var(--accent), 0 12px 24px rgba(0,0,0,.55);transform:translateY(-4px)}
+.crate-empty{grid-column:1/-1;color:var(--ink-3);font-size:14px;padding:40px 0;text-align:center;line-height:1.6}
+
+/* the chosen record */
+.crate-pick{
+  display:grid;grid-template-columns:auto 1fr;gap:26px;align-items:center;
+  padding:22px 24px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%);
+  animation:pickIn .35s ease-out;
+}
+.crate-pick[hidden]{display:none}
+@keyframes pickIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.crate-pick img{width:clamp(120px,16vh,180px);aspect-ratio:1;border-radius:4px;object-fit:cover;box-shadow:0 14px 30px rgba(0,0,0,.55)}
+.crate-pick .k{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.crate-pick .pt{font-family:var(--serif);font-weight:500;font-size:clamp(24px,3vw,38px);line-height:1.1;margin-top:6px}
+.crate-pick .pa{font-size:16px;color:var(--ink-2);margin-top:6px}
+.crate-pick .acts{display:flex;gap:10px;margin-top:14px}
+.crate-pick .acts button,.crate-pick .acts span{
+  font:500 13px/1 var(--sans);border-radius:999px;padding:9px 15px;cursor:pointer;
+  background:transparent;color:var(--ink-2);border:1px solid var(--line);
+}
+.crate-pick .acts button:hover,.crate-pick .acts span:hover{color:var(--ink);border-color:var(--ink-3)}
+@media (prefers-reduced-motion:reduce){.crate,.crate-pick{animation:none}}
+
 /* ---------------------------------------------------------------- clock */
 .clock{line-height:1}
 .hm{
@@ -589,6 +762,32 @@ body.goal-on .wrap{filter:brightness(.5);transition:filter .3s}
 .mod-go:hover{text-decoration:underline}
 .mod-go.relink{margin-top:0;font-size:inherit;opacity:1}
 
+/* Playlists: three covers, each with play-in-order and shuffle. */
+.pl-rows{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.pl-row{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;min-width:0}
+.pl-row img,.pl-row .noimg{width:clamp(36px,5vmin,48px);aspect-ratio:1;border-radius:4px;object-fit:cover;background:var(--bg-2)}
+.pl-row .t{font-size:clamp(12px,1.5vmin,14px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-row .msg{font-size:clamp(10px,1.15vmin,12px);color:#ff8a8d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-row button{width:clamp(28px,3.6vmin,34px);aspect-ratio:1;border-radius:50%;border:0;cursor:pointer;
+  display:grid;place-items:center;background:rgba(255,255,255,.06);color:var(--ink-2);
+  -webkit-app-region:no-drag;transition:background .15s,color .15s}
+.pl-row button:hover{background:var(--pine-hi);color:#0f1a14}
+.pl-row button:focus-visible{outline:2px solid var(--pine-hi);outline-offset:2px}
+.pl-row button svg{width:clamp(12px,1.6vmin,15px);height:clamp(12px,1.6vmin,15px);display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.pl-row button.play svg{fill:currentColor;stroke:none}
+.pl-row.busy button{opacity:.5;pointer-events:none}
+/* the picker in settings */
+.pl-pick{display:flex;flex-direction:column;gap:2px;max-height:280px;overflow-y:auto;
+  border:1px solid var(--line);border-radius:10px;padding:6px}
+.pl-pick label{display:grid;grid-template-columns:auto auto 1fr;gap:10px;align-items:center;
+  padding:6px 8px;border-radius:6px;cursor:pointer}
+.pl-pick label:hover{background:rgba(255,255,255,.04)}
+.pl-pick label.off{opacity:.4;cursor:default}
+.pl-pick img,.pl-pick .noimg{width:32px;height:32px;border-radius:3px;object-fit:cover;background:var(--bg-2)}
+.pl-pick .n{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-pick .c{font-size:11px;color:var(--ink-3)}
+.pl-pick .empty{font-size:13px;color:var(--ink-3);padding:10px}
+
 /* Quietly offers a new version. Sits above the gear, dismissable, and never
    installs anything without being asked. */
 .upbar{
@@ -625,28 +824,40 @@ body.goal-on .wrap{filter:brightness(.5);transition:filter .3s}
 .lyr-btn.on{color:var(--accent);border-color:var(--accent-2)}
 
 .lyr-stage{
-  width:min(84vw,66vmin);aspect-ratio:1;
-  display:flex;align-items:center;
+  /* A fixed box, not aspect-ratio: an aspect-ratio box grows to fit its
+     content, so a long song used to stretch the page and shove the side
+     panels down. */
+  /* Only the height that's actually free: what's left once the title block
+     underneath (~210px) is paid for. The live-banner case is below. */
+  width:min(84vw,78vmin);height:max(180px, min(70vh, 78vmin, calc(100vh - 210px)));min-height:0;
+  display:flex;align-items:stretch;
   -webkit-app-region:no-drag;
 }
 .lyr-stage[hidden]{display:none}
+body.has-live .lyr-stage{height:max(180px, min(70vh, 78vmin, calc(100vh - 210px - var(--md-h, 0px) - var(--md-top) - 18px)))}
 body.lyrics-on .stack{display:none}
 
 .lyr-scroll{
-  width:100%;max-height:100%;overflow-y:auto;
+  position:relative;width:100%;height:100%;overflow-y:auto;overscroll-behavior:contain;
   scrollbar-width:none;
-  mask-image:linear-gradient(180deg,transparent,#000 18%,#000 82%,transparent);
+  mask-image:linear-gradient(180deg,transparent,#000 22%,#000 78%,transparent);
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 22%,#000 78%,transparent);
 }
 .lyr-scroll::-webkit-scrollbar{display:none}
 .lyr-scroll .ln{
-  font-size:clamp(14px,2.1vmin,22px);line-height:1.45;
-  padding:clamp(4px,.8vmin,10px) 0;
-  color:var(--ink-3);opacity:.4;
-  transition:color .35s, opacity .35s;
+  font-size:clamp(15px,2.3vmin,24px);line-height:1.4;
+  padding:clamp(4px,.7vmin,9px) 0;
+  color:var(--ink-2);opacity:.38;
+  transform-origin:center;
+  transition:color .35s, opacity .35s, transform .35s;
 }
-.lyr-scroll .ln.on{color:var(--ink);opacity:1;font-family:var(--serif)}
+/* the lines either side of the current one, so the eye can find its place */
+.lyr-scroll .ln.near{opacity:.62}
+.lyr-scroll .ln.on{color:var(--ink);opacity:1;transform:scale(1.08)}
 .lyr-scroll .ln.blank{min-height:.5em}
-.lyr-scroll .pad{height:34%}
+.lyr-scroll .pad{height:45%}
+/* untimed lyrics have no 'current' line - just make them readable */
+.lyr-scroll.plain .ln{opacity:.85}
 .lyr-note{color:var(--ink-3);font-size:clamp(11px,1.4vmin,14px);opacity:.6;text-align:center;width:100%}
 
 /* --------------------------------------------------- settings and setup */
@@ -1180,6 +1391,28 @@ body.compact.has-art .grooves{opacity:.35}
       <div class="wx-lines" id="wxLines">Waiting for weather</div>
     </div></div>
 
+
+    <div class="panel" data-panel="room"><div class="room" id="room" hidden>
+      <div class="pill" id="ac" hidden>
+        <button class="ac-pw" id="acPw" aria-label="AC power" title="AC power">
+          <svg viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </button>
+        <button class="ac-b" data-t="-1" aria-label="Cooler"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></button>
+        <span class="ac-temp" id="acTemp">--&deg;</span>
+        <button class="ac-b" data-t="1" aria-label="Warmer"><svg viewBox="0 0 12 12"><path d="M2.5 6h7M6 2.5v7"/></svg></button>
+        <button class="ac-tag" id="acMode" title="Mode">cool</button>
+        <button class="ac-tag" id="acFan" title="Fan speed">fan auto</button>
+      </div>
+      <div id="lamps"></div>
+      <button class="idf" id="idfBtn" hidden>What&rsquo;s playing?</button>
+      <div class="st-connect" id="stConnect" hidden>
+        <button class="ac-tag" id="stGo">Connect SmartThings</button>
+        <input id="stCode" placeholder="Paste the code here" aria-label="SmartThings code">
+        <button class="ac-tag" id="stSend">Done</button>
+      </div>
+      <div class="room-msg" id="roomMsg"></div>
+    </div></div>
+
     <div class="panel" data-panel="qr">
     <div class="guest-connect" id="guestConnect" hidden>
       <div class="guest-title">Song requests</div>
@@ -1197,6 +1430,7 @@ body.compact.has-art .grooves{opacity:.35}
     </div>
     </div>
 
+    <div class="panel" data-panel="playlists"><div class="mod" id="modPlaylists" hidden></div></div>
     <div class="panel" data-panel="history"><div class="mod" id="modHistory" hidden></div></div>
     <div class="panel" data-panel="aotd"><div class="mod" id="modAotd" hidden></div></div>
     <div class="panel" data-panel="concerts"><div class="mod" id="modGigs" hidden></div></div>
@@ -1211,7 +1445,7 @@ body.compact.has-art .grooves{opacity:.35}
     <div class="side next" id="sideNext" aria-hidden="true"><div class="sdisc"><img></div></div>
     <div class="deck" id="deck" role="button" tabindex="0"
          title="Turntable">
-      <div class="plinth"></div>
+      <div class="plinth"><div class="pwr" id="pwr" aria-hidden="true" hidden></div></div>
       <div class="hint-ring"></div>
       <svg class="ring" id="ring" viewBox="0 0 100 100" aria-hidden="true">
         <circle class="ring-bg" cx="50" cy="50" r="49"></circle>
@@ -1258,6 +1492,31 @@ body.compact.has-art .grooves{opacity:.35}
     <div class="panel" data-panel="sport"><div class="fb" id="fb" hidden></div></div>
   </div>
 
+</div>
+
+<button class="crate-btn" id="crateBtn" hidden title="Browse your crate (C)" aria-label="Browse your crate">
+  <svg viewBox="0 0 32 32" aria-hidden="true">
+    <rect x="6" y="3" width="17" height="17" rx="1.5" transform="rotate(-8 14 12)" class="s1"/>
+    <rect x="9" y="4" width="17" height="17" rx="1.5" transform="rotate(6 17 12)" class="s2"/>
+    <path d="M3 15h26v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" class="box"/>
+    <path d="M11 20h10" class="slot"/>
+  </svg>
+</button>
+
+<div class="crate" id="crate" hidden role="dialog" aria-modal="true" aria-labelledby="crateTitle">
+  <div class="crate-panel">
+    <header class="crate-head">
+      <div>
+        <h2 id="crateTitle">Your crate</h2>
+        <div class="crate-count" id="crateCount"></div>
+      </div>
+      <input class="crate-search" id="crateSearch" type="search" placeholder="Search your records" aria-label="Search your records">
+      <button class="crate-shuffle" id="crateShuffle">Shuffle</button>
+      <button class="crate-x" id="crateClose" aria-label="Close">&times;</button>
+    </header>
+    <div class="crate-pick" id="cratePick" hidden></div>
+    <div class="crate-grid" id="crateGrid"></div>
+  </div>
 </div>
 
 <button class="gear" id="gearBtn" title="Settings" aria-label="Settings">
@@ -1366,6 +1625,12 @@ body.compact.has-art .grooves{opacity:.35}
       <p class="hint">Switch a panel off, or send it to the other side. Arrows reorder.</p>
     </div>
 
+    <div class="step" id="plStep">
+      <h2>Playlists</h2>
+      <div class="pl-pick" id="plPick"><div class="empty">Loading your playlists&hellip;</div></div>
+      <p class="hint">Tick up to three. They show in the Playlists panel with play and shuffle.</p>
+    </div>
+
     <div class="step" id="sportStep">
       <h2>Sport</h2>
       <select id="sportPick" class="sel">
@@ -1422,7 +1687,7 @@ body.compact.has-art .grooves{opacity:.35}
 </div>
 
 <div class="bar">
-  <span class="status"><span class="dot" id="dot"></span><span id="statusText">starting</span></span>
+  <span class="status" id="statusBtn"><span class="dot" id="dot"></span><span id="statusText">starting</span></span>
 </div>
 
 <script>
@@ -1746,6 +2011,8 @@ function setColour(hex){
 
 function panelOn(name, mods, st){
   if(name === 'qr') return (st.service || 'spotify') === 'spotify';
+  // Playlists come from Spotify; the other services don't hand them over.
+  if(name === 'playlists') return (st.service || 'spotify') === 'spotify' && mods.playlists !== false;
   return FIXED.includes(name) || mods[name] !== false;
 }
 
@@ -1852,7 +2119,7 @@ $('setupDone').addEventListener('click', async () => {
 });
 
 // settings panel
-$('gearBtn').addEventListener('click', () => { fillSettings(); $('settings').hidden = false; });
+$('gearBtn').addEventListener('click', () => { fillSettings(); $('settings').hidden = false; loadPlaylistPicker(); });
 // Repainting mid-edit is what made the city box refill itself.
 $('settingsClose').addEventListener('click', () => {
   $('settings').hidden = true;
@@ -1906,7 +2173,8 @@ $('settingsSave').addEventListener('click', async () => {
 /* ---------------- modules ---------------- */
 const MOD_NAMES = {clock:'Clock', weather:'Weather', qr:'Song requests (QR)',
                    sport:'Sport', history:'Listening history',
-                   aotd:'Album of the day', concerts:'Concerts'};
+                   aotd:'Album of the day', concerts:'Concerts',
+                   room:'Room (AC & lamps)', playlists:'Playlists'};
 const FIXED = ['clock', 'weather', 'qr'];    // always available, never "off"
 
 function ago(ts){
@@ -1961,15 +2229,17 @@ function renderHistory(h){
   let tiles, note = '';
   if(h.source === 'apple'){
     tiles = [[h.all_plays, 'plays, all time'], [h.all_hours + 'h', 'all time'],
-             [h.month, 'this month']];
+             [h.month, 'last 30 days']];
+  // Rolling windows, and the time listened always belongs to the plays right
+  // beside it - it used to put the month's hours next to the week's plays.
   }else if(h.spans === 'year'){
-    tiles = [[h.month, 'this month'], [span(h.mins_month), 'listened'],
-             [h.year, 'this year']];
+    tiles = [[h.month, 'last 30 days'], [span(h.mins_month), 'listened'],
+             [h.year, 'last 12 months']];
   }else if(h.spans === 'month'){
-    tiles = [[h.week, 'this week'], [span(h.mins_month), 'listened'],
-             [h.month, 'this month']];
+    tiles = [[h.week, 'last 7 days'], [span(h.mins_week), 'listened'],
+             [h.month, 'last 30 days']];
   }else if(h.spans === 'week'){
-    tiles = [[h.week, 'this week'], [span(h.mins_week), 'listened']];
+    tiles = [[h.week, 'last 7 days'], [span(h.mins_week), 'listened']];
   }else{
     tiles = [[h.week, 'plays so far'], [span(h.mins_week), 'listened']];
     note = 'Counting since ' + new Date(h.since * 1000)
@@ -2013,6 +2283,90 @@ function renderAotd(a){
       body:JSON.stringify({uri: a.uri})});
     setTimeout(() => { lastKey = '~'; poll(); }, 1200);
   });
+}
+
+/* ---------------- playlists ---------------- */
+const PL_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg>';
+const PL_SHUF = '<svg viewBox="0 0 24 24"><path d="M3 7h3.5c2 0 3.2.8 4.4 2.6l2.2 3.3c1.2 1.8 2.4 2.6 4.4 2.6H21M17.5 13l3.5 3.5-3.5 3.5M3 17h3.5c1.4 0 2.4-.4 3.3-1.2M13.2 8.2c.9-.8 1.9-1.2 3.3-1.2H21M17.5 3.5 21 7l-3.5 3.5"/></svg>';
+let plSig = '';
+function renderPlaylists(st){
+  const box = $('modPlaylists');
+  if(box.closest('.panel').hidden) return;
+  const picks = (st && st.playlists) || [];
+  const sig = JSON.stringify(picks);
+  if(sig === plSig) return;            // don't rebuild under the pointer every poll
+  plSig = sig;
+  if(!picks.length){ waiting(box, 'Playlists', 'Pick up to three in settings.'); return; }
+  box.hidden = false;
+  box.innerHTML = '<h3>Playlists</h3><div class="pl-rows">' + picks.map((p, i) =>
+    '<div class="pl-row" data-i="' + i + '">'
+    + (p.image ? '<img src="' + esc(p.image) + '" alt="">' : '<span class="noimg"></span>')
+    + '<div style="min-width:0"><div class="t">' + esc(p.name) + '</div><div class="msg"></div></div>'
+    + '<button class="play" aria-label="Play ' + esc(p.name) + '" title="Play">' + PL_PLAY + '</button>'
+    + '<button class="shuf" aria-label="Shuffle ' + esc(p.name) + '" title="Shuffle">' + PL_SHUF + '</button>'
+    + '</div>').join('') + '</div>';
+  box.querySelectorAll('.pl-row').forEach(row => {
+    const p = picks[+row.dataset.i];
+    const go = async shuffle => {
+      row.classList.add('busy');
+      row.querySelector('.msg').textContent = '';
+      try{
+        const j = await (await fetch('/api/playlists/play', {method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({uri: p.uri, shuffle})})).json();
+        if(!j.ok){
+          row.querySelector('.msg').textContent = j.message || 'Couldn’t start it.';
+          setTimeout(() => { row.querySelector('.msg').textContent = ''; }, 5000);
+        }
+      }catch(e){}
+      row.classList.remove('busy');
+      setTimeout(() => { lastKey = '~'; poll(); }, 1200);
+    };
+    row.querySelector('.play').addEventListener('click', () => go(false));
+    row.querySelector('.shuf').addEventListener('click', () => go(true));
+  });
+}
+
+/* The settings picker: every playlist, tick up to three, saved as you tick. */
+async function loadPlaylistPicker(){
+  const box = $('plPick');
+  $('plStep').hidden = (SET && SET.service || 'spotify') !== 'spotify';
+  if($('plStep').hidden) return;
+  box.innerHTML = '<div class="empty">Loading your playlists…</div>';
+  let j;
+  try{ j = await (await fetch('/api/playlists', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})).json(); }
+  catch(e){ box.innerHTML = '<div class="empty">Couldn’t load your playlists.</div>'; return; }
+  if(!j.ok){
+    box.innerHTML = (j.why === 'scope' || j.why === 'reconnect')
+      ? '<div class="empty">B-Side needs one more Spotify permission to see your playlists. '
+        + '<span class="mod-go relink" id="plRelink">Reconnect Spotify</span></div>'
+      : '<div class="empty">Couldn’t load your playlists (' + esc(j.why || 'error') + ').</div>';
+    const r = $('plRelink'); if(r) r.addEventListener('click', reconnectSpotify);
+    return;
+  }
+  const items = j.items || [];
+  if(!items.length){ box.innerHTML = '<div class="empty">No playlists on this account yet.</div>'; return; }
+  const chosen = new Set(((SET && SET.playlists) || []).map(p => p.uri));
+  box.innerHTML = items.map((p, i) =>
+    '<label data-i="' + i + '"><input type="checkbox"' + (chosen.has(p.uri) ? ' checked' : '') + '>'
+    + (p.image ? '<img src="' + esc(p.image) + '" alt="" loading="lazy">' : '<span class="noimg"></span>')
+    + '<span style="min-width:0"><div class="n">' + esc(p.name) + '</div><div class="c">'
+    + p.tracks + (p.tracks === 1 ? ' song' : ' songs') + (p.owner ? ' · ' + esc(p.owner) : '') + '</div></span></label>'
+  ).join('');
+  const boxes = [...box.querySelectorAll('input')];
+  const limit = () => {
+    const full = boxes.filter(b => b.checked).length >= 3;
+    boxes.forEach(b => { b.disabled = full && !b.checked; b.closest('label').classList.toggle('off', b.disabled); });
+  };
+  limit();
+  boxes.forEach(b => b.addEventListener('change', async () => {
+    limit();
+    // keep the order they were ticked in the list
+    const picks = boxes.filter(x => x.checked).map(x => items[+x.closest('label').dataset.i])
+      .map(p => ({uri: p.uri, name: p.name, image: p.image}));
+    await saveSettings({playlists: picks});
+    plSig = '';
+    if(lastState) renderPlaylists(SET);
+  }));
 }
 
 function renderGigs(g){
@@ -2189,8 +2543,9 @@ $('upNow').addEventListener('click', async () => {
 let LYR = null, lyrKey = '', lyrAt = -1, lyrOpen = false;
 
 function lyrElapsed(){
-  if(!prog) return null;
-  return prog.ms + (document.body.classList.contains('playing') ? Date.now() - prog.at : 0);
+  const c = prog || lyrClock;
+  if(!c) return null;
+  return c.ms + (document.body.classList.contains('playing') ? Date.now() - c.at : 0);
 }
 
 function lyrIndex(){
@@ -2215,6 +2570,8 @@ function lyrDraw(){
         + '</div>').join('')
     + (LYR.synced ? '' : '<div class="lyr-note">Not timed for this track.</div>')
     + '<div class="pad"></div>';
+  body.classList.toggle('plain', !LYR.synced);
+  body.scrollTop = 0;
   LYR.scrolledTo = -1;
   lyrAt = -1;
 }
@@ -2224,14 +2581,40 @@ function paintLyrics(){
   const at = lyrIndex();
   if(at === lyrAt) return;
   lyrAt = at;
-  const rows = $('lyrStageBody').querySelectorAll('.ln');
-  rows.forEach((r, i) => r.classList.toggle('on', i === at));
+  const box = $('lyrStageBody');
+  const rows = box.querySelectorAll('.ln');
+  rows.forEach((r, i) => {
+    r.classList.toggle('on', i === at);
+    r.classList.toggle('near', at >= 0 && i !== at && Math.abs(i - at) === 1);
+  });
   if(at >= 0 && rows[at] && at !== LYR.scrolledTo){
     LYR.scrolledTo = at;
-    rows[at].scrollIntoView({block:'center', behavior:'smooth'});
+    // Scroll only the lyrics box. scrollIntoView scrolls every ancestor too,
+    // page included - which is what dragged the clock off the bottom.
+    const r = rows[at];
+    box.scrollTo({top: r.offsetTop - box.clientHeight / 2 + r.offsetHeight / 2,
+                  behavior: 'smooth'});
   }
 }
 setInterval(paintLyrics, 250);
+
+/* Size the words to the room actually left above the title and controls.
+   A fixed vh share overflowed short windows (a 1080p screen at 150% gives
+   the page ~480px), pushing the controls off the bottom. */
+function fitLyrics(){
+  const st = $('lyrStage');
+  if(!st || st.hidden) return;
+  const track = document.querySelector('.track');
+  const gap = parseFloat(getComputedStyle(document.querySelector('.centre')).rowGap) || 24;
+  // The page's real padding, not a guess: during a live match the top
+  // padding grows by the banner's height, and the words have to give way.
+  const ws = getComputedStyle(document.querySelector('.wrap'));
+  const pad = (parseFloat(ws.paddingTop) || 0) + (parseFloat(ws.paddingBottom) || 0);
+  const room = innerHeight - (track ? track.offsetHeight : 160) - gap - pad - 8;
+  const cap = Math.min(innerHeight * 0.7, Math.min(innerWidth, innerHeight) * 0.78);
+  st.style.height = Math.max(120, Math.min(cap, room)) + 'px';
+}
+addEventListener('resize', fitLyrics);
 
 function showLyrics(on){
   lyrOpen = on && !!LYR;
@@ -2239,7 +2622,7 @@ function showLyrics(on){
   $('lyrStage').hidden = !lyrOpen;
   $('lyrToggle').classList.toggle('on', lyrOpen);
   $('lyrToggle').textContent = lyrOpen ? 'Record' : 'Lyrics';
-  if(lyrOpen){ lyrDraw(); paintLyrics(); }
+  if(lyrOpen){ fitLyrics(); lyrDraw(); paintLyrics(); }
 }
 $('lyrToggle').addEventListener('click', e => {
   e.stopPropagation();
@@ -2707,7 +3090,14 @@ const ARM_START = 1.9;   // lead-in groove
 const ARM_END = 26.0;    // run-out, near the label
 let prog = null;   // {at, ms, total}
 
+/* Lyrics only need to know where in the song we are. Windows' media info
+   often gives a position but no length, which used to leave the needle AND
+   the lyrics without a clock - so the words get one of their own. */
+let lyrClock = null;   // {at, ms}
 function setProgress(np){
+  lyrClock = (np && typeof np.progress_ms === 'number')
+    ? {at: Date.now(), ms: np.progress_ms + (np.progress_at ? Math.max(0, Date.now() - np.progress_at * 1000) : 0)}
+    : null;
   if(!np || !np.duration_ms){
     prog = null;
     document.body.classList.remove('has-progress');
@@ -2775,7 +3165,8 @@ async function poll(){
     const shown = s.now_playing
       || (s.spotify_paused ? Object.assign({}, s.spotify_paused, {paused:true}) : null);
     lastTrack = s.last_track || lastTrack;
-    renderTrack(shown, null);
+    renderTrack(shown, s.crate || null);
+    $('crateBtn').hidden = !s.crate;
     document.body.classList.toggle('playing', !!(shown && !shown.paused));
     renderControls(s);
     spotifyOn = !!((s.now_playing && s.now_playing.source === 'spotify') || s.spotify_paused);
@@ -2791,9 +3182,12 @@ async function poll(){
     renderHistory(s.history);
     renderAotd(s.aotd);
     renderGigs(s.concerts);
+    renderPlaylists(s.settings);
     renderLyrics(s.lyrics);
+    fitLyrics();
     renderSides(s);
     renderUpdate(s.update);
+    renderRoom(s);
     const showQr = !!(s.guest_url && s.guest_ready);
     $('guest').hidden = !showQr;
     // Connected, but without queue permission: say so where the QR would be.
@@ -2812,6 +3206,268 @@ async function poll(){
 }
 poll();
 
+/* ---------------- the room: AC, lamps, and the mic ----------------
+   Lifted from the Windows build. Nothing here draws anything unless the
+   server actually found the gear, so a copy with no Tuya keys just shows
+   an empty panel - same as every other module. */
+let acBusy = 0, lampSig = '', lampBusy = 0, stUrl = '';
+const bulbIcon = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 12 2zM9 20h6v1a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1z"/></svg>';
+const plugIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg>';
+
+function roomSay(msg, ms){
+  $('roomMsg').textContent = msg || '';
+  if(msg) setTimeout(() => { $('roomMsg').textContent = ''; }, ms || 5000);
+}
+
+function renderAc(a, err){
+  $('ac').hidden = !a;
+  if(err && !a){ roomSay(err, 8000); return; }
+  // A press takes a second to come back round the Tuya cloud; don't let a
+  // poll in the meantime snap the dial back to the old reading.
+  if(!a || Date.now() - acBusy < 4000) return;
+  paintAc(a);
+}
+function paintAc(a){
+  $('ac').classList.toggle('on', !!a.power);
+  $('acTemp').textContent = a.temp + '°';
+  $('acMode').textContent = a.mode;
+  $('acFan').textContent = 'fan ' + a.fan;
+  $('acPw').title = (a.name || 'AC') + (a.power ? ' is on' : ' is off');
+}
+async function acSend(action, value){
+  acBusy = Date.now();
+  try{
+    const j = await (await fetch('/api/ac', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action, value})})).json();
+    if(j.ok && j.ac) paintAc(j.ac); else if(!j.ok) roomSay(j.message);
+  }catch(e){}
+  acBusy = Date.now();
+}
+$('acPw').addEventListener('click', () => acSend('power'));
+document.querySelectorAll('.ac-b').forEach(b =>
+  b.addEventListener('click', () => acSend('temp', +b.dataset.t)));
+$('acMode').addEventListener('click', () => acSend('mode'));
+$('acFan').addEventListener('click', () => acSend('fan'));
+
+/* The turntable's own smart plug. On the old Windows build the deck was its
+   switch - so wherever a plug like that exists, it still is. */
+let deckPlug = null;
+function pickDeckPlug(ls){
+  const plugs = (ls || []).filter(l => l.plug);
+  // Same rule as the old build: a plug named for it, else the first plug found.
+  return plugs.find(l => /vinyl|turntable|record|deck/i.test(l.name || '')) || plugs[0] || null;
+}
+function setDeckPower(on){
+  $('deck').classList.toggle('power-on', !!on);
+  $('deck').classList.toggle('power-off', !on);
+  $('pwr').hidden = false;
+  $('pwr').textContent = on ? 'ON' : 'OFF';
+  $('deck').title = on ? 'Turntable on. Click to switch it off'
+                       : 'Turntable off. Click to switch it on';
+}
+function renderLamps(ls){
+  ls = ls || [];
+  const dp = pickDeckPlug(ls);
+  if(dp && Date.now() - lampBusy > 4000){ deckPlug = dp; setDeckPower(dp.on); }
+  if(dp) ls = ls.filter(l => l.id !== dp.id);   // it lives on the deck, not in the list
+  if(!ls.length){ if(lampSig !== 'none'){ lampSig = 'none'; $('lamps').innerHTML = ''; } return; }
+  if(Date.now() - lampBusy < 4000) return;
+  const sig = JSON.stringify(ls); if(sig === lampSig) return; lampSig = sig;
+  $('lamps').innerHTML = ls.map(l =>
+    '<div class="lamp pill' + (l.plug ? ' plug' : '') + (l.on ? ' on' : '')
+    + (l.online === false ? ' gone' : '') + '" data-id="' + esc(l.id) + '"'
+    + (l.online === false ? ' title="Not responding. Switched off at the wall?"' : '') + '>'
+    + '<button class="lp" aria-label="' + esc(l.name) + ' power" aria-pressed="' + !!l.on + '">'
+    + (l.plug ? plugIcon : bulbIcon) + '</button>'
+    + '<span class="ln">' + esc(l.name) + '</span>'
+    + (l.bright != null ? '<input type="range" class="br" min="10" max="100" value="' + l.bright
+        + '" style="--v:' + l.bright + '%" aria-label="Brightness">' : '')
+    + '</div>').join('');
+}
+async function lampSend(id, action, value){
+  lampBusy = Date.now();
+  try{
+    const j = await (await fetch('/api/lamp', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id, action, value})})).json();
+    if(!j.ok) roomSay(j.message, 4000);
+  }catch(e){}
+  lampBusy = Date.now();
+}
+let lampTimer = null;
+$('lamps').addEventListener('click', e => {
+  const b = e.target.closest('.lp'); if(!b) return;
+  const row = b.closest('.lamp'); const on = !row.classList.contains('on');
+  row.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+  lampSend(row.dataset.id, 'power', on);
+});
+$('lamps').addEventListener('input', e => {
+  const row = e.target.closest('.lamp'); if(!row) return;
+  e.target.style.setProperty('--v', e.target.value + '%');
+  lampBusy = Date.now(); row.classList.add('on');
+  clearTimeout(lampTimer);
+  lampTimer = setTimeout(() => lampSend(row.dataset.id, 'bright', +e.target.value), 250);
+});
+
+/* The mic. On the old build this hung off clicking the record, but here that
+   click already starts the music app - so it gets a button of its own. */
+let identifying = false;
+async function identify(){
+  if(identifying) return;
+  identifying = true;
+  $('idfBtn').disabled = true;
+  $('idfBtn').textContent = 'Listening…';
+  try{
+    const j = await (await fetch('/api/identify', {method:'POST'})).json();
+    if(j && j.error) roomSay(j.error, 6000);
+  }catch(e){}
+  identifying = false;
+  $('idfBtn').disabled = false;
+  $('idfBtn').textContent = 'What’s playing?';
+  lastKey = '~';
+  poll();
+}
+$('idfBtn').addEventListener('click', identify);
+// The old build's habit: click the status in the corner to name the record.
+let canIdentify = false;
+$('statusBtn').addEventListener('click', () => { if(canIdentify) identify(); });
+
+$('stGo').addEventListener('click', () => {
+  if(!stUrl) return;
+  if(window.pywebview && pywebview.api) pywebview.api.open(stUrl); else window.open(stUrl, '_blank');
+  $('stCode').focus();
+});
+$('stSend').addEventListener('click', async () => {
+  try{
+    const j = await (await fetch('/api/st/code', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({code:$('stCode').value})})).json();
+    if(j.ok){ $('stConnect').hidden = true; $('stCode').value = ''; setTimeout(poll, 2000); }
+    else roomSay(j.message, 6000);
+  }catch(e){}
+});
+
+function renderRoom(s){
+  renderAc(s.ac, s.ac_error);
+  renderLamps(s.lamps);
+  // The button only makes sense where a mic lookup is actually wired up.
+  $('idfBtn').hidden = !s.can_identify;
+  canIdentify = !!s.can_identify;
+  $('statusBtn').style.cursor = canIdentify ? 'pointer' : '';
+  $('statusBtn').title = canIdentify ? 'Click to identify what\u2019s playing' : '';
+  $('stConnect').hidden = !s.st_needs_login;
+  if(s.st_auth_url) stUrl = s.st_auth_url;
+  const r = $('room');
+  if(r) r.hidden = !($('ac').hidden === false || ($('lamps').children.length > 0)
+                     || !$('idfBtn').hidden || !$('stConnect').hidden);
+}
+
+/* ---------------- the crate ---------------- */
+let crateRecs = [], crateLoaded = 0, shuffling = false;
+const coverSrc = u => u ? '/api/art?u=' + encodeURIComponent(u) : '';
+
+async function openCrate(){
+  $('crate').hidden = false;
+  document.body.classList.add('crate-open');
+  if(!crateRecs.length || Date.now() - crateLoaded > 10 * 60000){
+    $('crateGrid').innerHTML = '<div class="crate-empty">Loading your records\u2026</div>';
+    try{
+      crateRecs = (await (await fetch('/api/crate')).json()).records || [];
+      crateLoaded = Date.now();
+    }catch(e){ crateRecs = []; }
+  }
+  $('crateCount').textContent = crateRecs.length ? crateRecs.length + ' records' : '';
+  drawCrate();
+  setTimeout(() => $('crateSearch').focus(), 50);
+}
+function closeCrate(){
+  $('crate').hidden = true;
+  document.body.classList.remove('crate-open');
+  $('crateBtn').focus();
+}
+
+function drawCrate(){
+  const q = $('crateSearch').value.trim().toLowerCase();
+  const list = crateRecs
+    .map((r, i) => Object.assign({i}, r))
+    .filter(r => !q || (r.title + ' ' + r.artist + ' ' + r.year).toLowerCase().includes(q))
+    .sort((a, b) => a.artist.localeCompare(b.artist) || String(a.year).localeCompare(String(b.year)));
+  if(!crateRecs.length){
+    $('crateGrid').innerHTML = '<div class="crate-empty">Your crate is empty.<br>Add records to your Discogs collection and they\u2019ll show up here.</div>';
+    return;
+  }
+  if(!list.length){
+    $('crateGrid').innerHTML = '<div class="crate-empty">Nothing in your crate matches \u201c' + esc(q) + '\u201d.</div>';
+    return;
+  }
+  $('crateGrid').innerHTML = list.map(r =>
+    '<button class="sleeve" data-i="' + r.i + '">'
+    + '<img class="cv" loading="lazy" alt="" src="' + esc(coverSrc(r.art)) + '">'
+    + '<div><div class="t">' + esc(r.title) + '</div>'
+    + '<div class="a">' + esc(r.artist) + (r.year ? ' \u00b7 ' + esc(r.year) : '') + '</div></div>'
+    + '</button>').join('');
+}
+
+function showPick(i){
+  const r = crateRecs[i];
+  if(!r) return;
+  $('cratePick').innerHTML =
+      '<img alt="" src="' + esc(coverSrc(r.art)) + '">'
+    + '<div><div class="k">Tonight\u2019s pick</div>'
+    + '<div class="pt">' + esc(r.title) + '</div>'
+    + '<div class="pa">' + esc(r.artist) + (r.year ? ' \u00b7 ' + esc(r.year) : '') + '</div>'
+    + '<div class="acts"><button id="pickAgain">Pick another</button>'
+    + (r.url ? '<span data-open="' + esc(r.url) + '" role="link" tabindex="0">Discogs \u2197</span>' : '')
+    + '</div></div>';
+  $('cratePick').hidden = false;
+  $('pickAgain').addEventListener('click', shuffleCrate);
+}
+
+// Flick through the sleeves, slowing down, then land on one.
+function shuffleCrate(){
+  if(shuffling || !crateRecs.length) return;
+  $('crateSearch').value = ''; drawCrate();
+  const sleeves = [...document.querySelectorAll('.sleeve')];
+  const target = sleeves[Math.floor(Math.random() * sleeves.length)];
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduce || sleeves.length < 3){ land(target); return; }
+  shuffling = true;
+  let n = 0, delay = 45;
+  const steps = 18 + Math.floor(Math.random() * 6);
+  (function hop(){
+    sleeves.forEach(el => el.classList.remove('lit'));
+    const el = n >= steps ? target : sleeves[Math.floor(Math.random() * sleeves.length)];
+    el.classList.add('lit');
+    el.scrollIntoView({block:'nearest'});
+    if(n++ >= steps){ shuffling = false; land(el); return; }
+    delay *= 1.12;
+    setTimeout(hop, delay);
+  })();
+}
+function land(el){
+  document.querySelectorAll('.sleeve').forEach(x => x.classList.toggle('lit', x === el));
+  showPick(+el.dataset.i);
+  $('crate').querySelector('.crate-panel').scrollTop = 0;
+}
+
+$('crateBtn').addEventListener('click', openCrate);
+$('crateClose').addEventListener('click', closeCrate);
+$('crateShuffle').addEventListener('click', shuffleCrate);
+$('crateSearch').addEventListener('input', drawCrate);
+$('crate').addEventListener('click', e => { if(e.target === $('crate')) closeCrate(); });
+$('crateGrid').addEventListener('click', e => {
+  const b = e.target.closest('.sleeve'); if(!b) return;
+  document.querySelectorAll('.sleeve').forEach(x => x.classList.toggle('lit', x === b));
+  showPick(+b.dataset.i);
+});
+document.addEventListener('keydown', e => {
+  const typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+  if(!$('crate').hidden){
+    if(e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); closeCrate(); }
+    else if(!typing && e.key.toLowerCase() === 'r'){ shuffleCrate(); }
+    return;
+  }
+  if(!typing && e.key.toLowerCase() === 'c'){ openCrate(); }
+}, true);
+
 /* ---------------- the turntable ---------------- */
 $('connectBtn').addEventListener('click', async () => {
   const r = await fetch('/api/spotify/login');
@@ -2824,6 +3480,13 @@ $('guestConnectBtn').addEventListener('click', () => $('connectBtn').click());
 // Clicking the record opens the music app and starts it playing.
 async function deckClick(){
   if(compact){ setCompact(false); return; }
+  if(deckPlug){
+    const on = !deckPlug.on;
+    deckPlug.on = on;
+    setDeckPower(on);
+    lampSend(deckPlug.id, 'power', on);
+    return;
+  }
   $('deck').classList.add('starting');
   try{
     const j = await (await fetch('/api/player/open', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})).json();

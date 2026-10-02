@@ -102,8 +102,8 @@ DEFAULTS = {
     "sport": "soccer",
     "modules": {"sport": True, "history": True, "lyrics": False,
                 "notes": True, "concerts": False, "aotd": True,
-                "room": True},
-    "layout": {"left": ["clock", "weather", "room", "qr"],
+                "room": True, "playlists": True},
+    "layout": {"left": ["clock", "weather", "room", "playlists", "qr"],
                "right": ["sport", "history", "aotd", "concerts"]},
     "update_repo": "mahirb03/B-side-updates",   # the public mirror
     "update_branch": "main",
@@ -242,6 +242,10 @@ def public_settings():
         "setup_done": bool(CFG.get("setup_done")),
         "always_on_top": bool(CFG.get("always_on_top")),
         "update_repo": CFG.get("update_repo", ""),
+        # the three picks: uri, name, cover - nothing secret
+        "playlists": [{"uri": p.get("uri", ""), "name": p.get("name", ""),
+                       "image": p.get("image", "")}
+                      for p in (CFG.get("playlists") or [])[:3]],
     }
 WAKE_SPOTIFY = threading.Event()   # set after a play/pause/volume press
 
@@ -790,10 +794,12 @@ def football_loop():
 
 SPOTIFY_SCOPES = ("user-read-currently-playing user-read-playback-state "
                   "user-modify-playback-state "
-                  "user-read-recently-played user-top-read user-library-read")
+                  "user-read-recently-played user-top-read user-library-read "
+                  "playlist-read-private playlist-read-collaborative")
 STATS_SCOPES = ("user-read-recently-played", "user-top-read")
 LIBRARY_SCOPE = "user-library-read"
 QUEUE_SCOPE = "user-modify-playback-state"
+PLAYLIST_SCOPE = "playlist-read-private"
 TOKEN_PATH = os.path.join(USER_DIR, "spotify_token.json")
 _pkce = {}
 
@@ -968,6 +974,88 @@ def load_last_track():
             set_state(last_track=json.load(f))
     except Exception:
         pass
+
+
+_PL_CACHE = {"at": 0, "items": []}
+
+def spotify_playlists(force=False):
+    """Your playlists, for the settings picker. Kept ten minutes - the list
+    barely changes, and the picker asks every time it opens."""
+    if PLAYLIST_SCOPE not in (_load_tokens().get("scope") or ""):
+        return {"ok": False, "why": "scope"}
+    if not force and _PL_CACHE["items"] and time.time() - _PL_CACHE["at"] < 600:
+        return {"ok": True, "items": _PL_CACHE["items"]}
+    items, url = [], "https://api.spotify.com/v1/me/playlists?limit=50"
+    try:
+        while url and len(items) < 300:
+            _, j = _spotify_call("GET", url)
+            for p in (j.get("items") or []):
+                if not p:
+                    continue
+                imgs = p.get("images") or []
+                items.append({
+                    "uri": p.get("uri", ""),
+                    "name": p.get("name", ""),
+                    "owner": ((p.get("owner") or {}).get("display_name") or ""),
+                    "tracks": ((p.get("tracks") or {}).get("total") or 0),
+                    # the smallest that's still crisp at 48px on a 2x screen
+                    "image": (imgs[-1] if len(imgs) == 1 else (imgs[1] if len(imgs) > 1 else {})).get("url", "")
+                             if imgs else "",
+                })
+            url = j.get("next")
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "why": "reconnect" if e.code in (401, 403) else str(e.code)}
+    except Exception as e:
+        return {"ok": False, "why": str(e)}
+    _PL_CACHE.update(at=time.time(), items=items)
+    # Keep the saved picks' covers current - a playlist's mosaic changes
+    # whenever its first few songs do.
+    picks = CFG.get("playlists") or []
+    fresh = {p["uri"]: p for p in items}
+    if any(fresh.get(p.get("uri"), {}).get("image", p.get("image")) != p.get("image") for p in picks):
+        save_config({"playlists": [dict(p, image=fresh.get(p.get("uri"), {}).get("image", p.get("image")))
+                                   for p in picks]})
+    return {"ok": True, "items": items}
+
+
+def play_playlist(uri, shuffle=False):
+    """Start a playlist, in order or shuffled. Spotify's own shuffle still
+    opens on track one, so a shuffled start jumps to a random track too."""
+    if not uri.startswith("spotify:playlist:"):
+        return False, "That isn't a playlist."
+    base = "https://api.spotify.com/v1/me/player"
+    body = {"context_uri": uri}
+    if shuffle:
+        total = next((p["tracks"] for p in _PL_CACHE["items"] if p["uri"] == uri), 0)
+        if not total:
+            try:
+                _, j = _spotify_call("GET", "https://api.spotify.com/v1/playlists/"
+                                     + uri.split(":")[-1] + "?fields=tracks.total")
+                total = (j.get("tracks") or {}).get("total") or 0
+            except Exception:
+                total = 0
+        if total > 1:
+            import random
+            body["offset"] = {"position": random.randrange(total)}
+    def set_shuffle():
+        try:
+            _spotify_call("PUT", f"{base}/shuffle?state={'true' if shuffle else 'false'}", data=b"")
+        except Exception:
+            pass                      # no device yet - tried again after play
+    set_shuffle()
+    try:
+        _spotify_call("PUT", base + "/play", data=json.dumps(body).encode())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False, "Open Spotify on a device first."
+        if e.code == 403:
+            return False, "Spotify won't allow that (it needs Premium)."
+        if e.code == 401:
+            return False, "Reconnect Spotify."
+        return False, f"Spotify said no ({e.code})."
+    set_shuffle()                     # now there's surely an active device
+    WAKE_SPOTIFY.set()
+    return True, ""
 
 
 def spotify_resume(uri=""):
@@ -3124,10 +3212,11 @@ def history_stats():
 
     now = datetime.now()
     since = min((r["at"] for r in rows), default=time.time())
-    month_start = now.replace(day=1, hour=0, minute=0, second=0,
-                              microsecond=0).timestamp()
-    year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0,
-                             microsecond=0).timestamp()
+    # Rolling windows, all three. Calendar ones read as nonsense early in a
+    # month: on the 2nd, 'this month' was two days while 'this week' was
+    # seven, so the month showed fewer plays than the week.
+    month_start = time.time() - 30 * 86400
+    year_start = time.time() - 365 * 86400
 
     week = [r for r in rows if r["at"] > time.time() - 7 * 86400]
     month = [r for r in rows if r["at"] >= month_start]
@@ -3142,9 +3231,9 @@ def history_stats():
     # Widest period the log can honestly speak for, with a day of slack so a
     # fresh log doesn't claim the week either.
     spans = "week" if since <= time.time() - 6 * 86400 else "some"
-    if since <= month_start:
+    if since <= month_start + 86400:     # same day of slack as the week
         spans = "month"
-    if since <= year_start:
+    if since <= year_start + 86400:
         spans = "year"
 
     counts = {}
@@ -4323,6 +4412,15 @@ class Handler(BaseHTTPRequestHandler):
                 IDENTIFYING.clear()
             return
 
+        if path == "/api/playlists":
+            self._send(200, json.dumps(spotify_playlists(force=bool(data.get("force")))))
+            return
+
+        if path == "/api/playlists/play":
+            ok, msg = play_playlist(str(data.get("uri", "")), bool(data.get("shuffle")))
+            self._send(200, json.dumps({"ok": ok, "message": msg}))
+            return
+
         if path == "/api/soundbar":
             ok, msg = sb_control(data.get("action"))
             self._send(200, json.dumps({"ok": ok, "message": msg}))
@@ -4363,7 +4461,7 @@ class Handler(BaseHTTPRequestHandler):
             allowed = ("service", "colour", "place", "latitude", "longitude",
                        "country", "auto_location", "football", "guest_queue",
                        "setup_done", "always_on_top", "sport", "modules", "layout",
-                       "update_repo")
+                       "update_repo", "playlists")
             clean = {k: v for k, v in patch.items() if k in allowed}
             if clean.get("auto_location"):
                 got = locate()

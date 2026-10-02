@@ -762,6 +762,32 @@ body.goal-on .wrap{filter:brightness(.5);transition:filter .3s}
 .mod-go:hover{text-decoration:underline}
 .mod-go.relink{margin-top:0;font-size:inherit;opacity:1}
 
+/* Playlists: three covers, each with play-in-order and shuffle. */
+.pl-rows{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.pl-row{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;min-width:0}
+.pl-row img,.pl-row .noimg{width:clamp(36px,5vmin,48px);aspect-ratio:1;border-radius:4px;object-fit:cover;background:var(--bg-2)}
+.pl-row .t{font-size:clamp(12px,1.5vmin,14px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-row .msg{font-size:clamp(10px,1.15vmin,12px);color:#ff8a8d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-row button{width:clamp(28px,3.6vmin,34px);aspect-ratio:1;border-radius:50%;border:0;cursor:pointer;
+  display:grid;place-items:center;background:rgba(255,255,255,.06);color:var(--ink-2);
+  -webkit-app-region:no-drag;transition:background .15s,color .15s}
+.pl-row button:hover{background:var(--pine-hi);color:#0f1a14}
+.pl-row button:focus-visible{outline:2px solid var(--pine-hi);outline-offset:2px}
+.pl-row button svg{width:clamp(12px,1.6vmin,15px);height:clamp(12px,1.6vmin,15px);display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.pl-row button.play svg{fill:currentColor;stroke:none}
+.pl-row.busy button{opacity:.5;pointer-events:none}
+/* the picker in settings */
+.pl-pick{display:flex;flex-direction:column;gap:2px;max-height:280px;overflow-y:auto;
+  border:1px solid var(--line);border-radius:10px;padding:6px}
+.pl-pick label{display:grid;grid-template-columns:auto auto 1fr;gap:10px;align-items:center;
+  padding:6px 8px;border-radius:6px;cursor:pointer}
+.pl-pick label:hover{background:rgba(255,255,255,.04)}
+.pl-pick label.off{opacity:.4;cursor:default}
+.pl-pick img,.pl-pick .noimg{width:32px;height:32px;border-radius:3px;object-fit:cover;background:var(--bg-2)}
+.pl-pick .n{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-pick .c{font-size:11px;color:var(--ink-3)}
+.pl-pick .empty{font-size:13px;color:var(--ink-3);padding:10px}
+
 /* Quietly offers a new version. Sits above the gear, dismissable, and never
    installs anything without being asked. */
 .upbar{
@@ -1404,6 +1430,7 @@ body.compact.has-art .grooves{opacity:.35}
     </div>
     </div>
 
+    <div class="panel" data-panel="playlists"><div class="mod" id="modPlaylists" hidden></div></div>
     <div class="panel" data-panel="history"><div class="mod" id="modHistory" hidden></div></div>
     <div class="panel" data-panel="aotd"><div class="mod" id="modAotd" hidden></div></div>
     <div class="panel" data-panel="concerts"><div class="mod" id="modGigs" hidden></div></div>
@@ -1596,6 +1623,12 @@ body.compact.has-art .grooves{opacity:.35}
       <h2>Panels</h2>
       <div class="mods" id="modList"></div>
       <p class="hint">Switch a panel off, or send it to the other side. Arrows reorder.</p>
+    </div>
+
+    <div class="step" id="plStep">
+      <h2>Playlists</h2>
+      <div class="pl-pick" id="plPick"><div class="empty">Loading your playlists&hellip;</div></div>
+      <p class="hint">Tick up to three. They show in the Playlists panel with play and shuffle.</p>
     </div>
 
     <div class="step" id="sportStep">
@@ -1978,6 +2011,8 @@ function setColour(hex){
 
 function panelOn(name, mods, st){
   if(name === 'qr') return (st.service || 'spotify') === 'spotify';
+  // Playlists come from Spotify; the other services don't hand them over.
+  if(name === 'playlists') return (st.service || 'spotify') === 'spotify' && mods.playlists !== false;
   return FIXED.includes(name) || mods[name] !== false;
 }
 
@@ -2084,7 +2119,7 @@ $('setupDone').addEventListener('click', async () => {
 });
 
 // settings panel
-$('gearBtn').addEventListener('click', () => { fillSettings(); $('settings').hidden = false; });
+$('gearBtn').addEventListener('click', () => { fillSettings(); $('settings').hidden = false; loadPlaylistPicker(); });
 // Repainting mid-edit is what made the city box refill itself.
 $('settingsClose').addEventListener('click', () => {
   $('settings').hidden = true;
@@ -2139,7 +2174,7 @@ $('settingsSave').addEventListener('click', async () => {
 const MOD_NAMES = {clock:'Clock', weather:'Weather', qr:'Song requests (QR)',
                    sport:'Sport', history:'Listening history',
                    aotd:'Album of the day', concerts:'Concerts',
-                   room:'Room (AC & lamps)'};
+                   room:'Room (AC & lamps)', playlists:'Playlists'};
 const FIXED = ['clock', 'weather', 'qr'];    // always available, never "off"
 
 function ago(ts){
@@ -2194,15 +2229,17 @@ function renderHistory(h){
   let tiles, note = '';
   if(h.source === 'apple'){
     tiles = [[h.all_plays, 'plays, all time'], [h.all_hours + 'h', 'all time'],
-             [h.month, 'this month']];
+             [h.month, 'last 30 days']];
+  // Rolling windows, and the time listened always belongs to the plays right
+  // beside it - it used to put the month's hours next to the week's plays.
   }else if(h.spans === 'year'){
-    tiles = [[h.month, 'this month'], [span(h.mins_month), 'listened'],
-             [h.year, 'this year']];
+    tiles = [[h.month, 'last 30 days'], [span(h.mins_month), 'listened'],
+             [h.year, 'last 12 months']];
   }else if(h.spans === 'month'){
-    tiles = [[h.week, 'this week'], [span(h.mins_month), 'listened'],
-             [h.month, 'this month']];
+    tiles = [[h.week, 'last 7 days'], [span(h.mins_week), 'listened'],
+             [h.month, 'last 30 days']];
   }else if(h.spans === 'week'){
-    tiles = [[h.week, 'this week'], [span(h.mins_week), 'listened']];
+    tiles = [[h.week, 'last 7 days'], [span(h.mins_week), 'listened']];
   }else{
     tiles = [[h.week, 'plays so far'], [span(h.mins_week), 'listened']];
     note = 'Counting since ' + new Date(h.since * 1000)
@@ -2246,6 +2283,90 @@ function renderAotd(a){
       body:JSON.stringify({uri: a.uri})});
     setTimeout(() => { lastKey = '~'; poll(); }, 1200);
   });
+}
+
+/* ---------------- playlists ---------------- */
+const PL_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg>';
+const PL_SHUF = '<svg viewBox="0 0 24 24"><path d="M3 7h3.5c2 0 3.2.8 4.4 2.6l2.2 3.3c1.2 1.8 2.4 2.6 4.4 2.6H21M17.5 13l3.5 3.5-3.5 3.5M3 17h3.5c1.4 0 2.4-.4 3.3-1.2M13.2 8.2c.9-.8 1.9-1.2 3.3-1.2H21M17.5 3.5 21 7l-3.5 3.5"/></svg>';
+let plSig = '';
+function renderPlaylists(st){
+  const box = $('modPlaylists');
+  if(box.closest('.panel').hidden) return;
+  const picks = (st && st.playlists) || [];
+  const sig = JSON.stringify(picks);
+  if(sig === plSig) return;            // don't rebuild under the pointer every poll
+  plSig = sig;
+  if(!picks.length){ waiting(box, 'Playlists', 'Pick up to three in settings.'); return; }
+  box.hidden = false;
+  box.innerHTML = '<h3>Playlists</h3><div class="pl-rows">' + picks.map((p, i) =>
+    '<div class="pl-row" data-i="' + i + '">'
+    + (p.image ? '<img src="' + esc(p.image) + '" alt="">' : '<span class="noimg"></span>')
+    + '<div style="min-width:0"><div class="t">' + esc(p.name) + '</div><div class="msg"></div></div>'
+    + '<button class="play" aria-label="Play ' + esc(p.name) + '" title="Play">' + PL_PLAY + '</button>'
+    + '<button class="shuf" aria-label="Shuffle ' + esc(p.name) + '" title="Shuffle">' + PL_SHUF + '</button>'
+    + '</div>').join('') + '</div>';
+  box.querySelectorAll('.pl-row').forEach(row => {
+    const p = picks[+row.dataset.i];
+    const go = async shuffle => {
+      row.classList.add('busy');
+      row.querySelector('.msg').textContent = '';
+      try{
+        const j = await (await fetch('/api/playlists/play', {method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({uri: p.uri, shuffle})})).json();
+        if(!j.ok){
+          row.querySelector('.msg').textContent = j.message || 'Couldn’t start it.';
+          setTimeout(() => { row.querySelector('.msg').textContent = ''; }, 5000);
+        }
+      }catch(e){}
+      row.classList.remove('busy');
+      setTimeout(() => { lastKey = '~'; poll(); }, 1200);
+    };
+    row.querySelector('.play').addEventListener('click', () => go(false));
+    row.querySelector('.shuf').addEventListener('click', () => go(true));
+  });
+}
+
+/* The settings picker: every playlist, tick up to three, saved as you tick. */
+async function loadPlaylistPicker(){
+  const box = $('plPick');
+  $('plStep').hidden = (SET && SET.service || 'spotify') !== 'spotify';
+  if($('plStep').hidden) return;
+  box.innerHTML = '<div class="empty">Loading your playlists…</div>';
+  let j;
+  try{ j = await (await fetch('/api/playlists', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})).json(); }
+  catch(e){ box.innerHTML = '<div class="empty">Couldn’t load your playlists.</div>'; return; }
+  if(!j.ok){
+    box.innerHTML = (j.why === 'scope' || j.why === 'reconnect')
+      ? '<div class="empty">B-Side needs one more Spotify permission to see your playlists. '
+        + '<span class="mod-go relink" id="plRelink">Reconnect Spotify</span></div>'
+      : '<div class="empty">Couldn’t load your playlists (' + esc(j.why || 'error') + ').</div>';
+    const r = $('plRelink'); if(r) r.addEventListener('click', reconnectSpotify);
+    return;
+  }
+  const items = j.items || [];
+  if(!items.length){ box.innerHTML = '<div class="empty">No playlists on this account yet.</div>'; return; }
+  const chosen = new Set(((SET && SET.playlists) || []).map(p => p.uri));
+  box.innerHTML = items.map((p, i) =>
+    '<label data-i="' + i + '"><input type="checkbox"' + (chosen.has(p.uri) ? ' checked' : '') + '>'
+    + (p.image ? '<img src="' + esc(p.image) + '" alt="" loading="lazy">' : '<span class="noimg"></span>')
+    + '<span style="min-width:0"><div class="n">' + esc(p.name) + '</div><div class="c">'
+    + p.tracks + (p.tracks === 1 ? ' song' : ' songs') + (p.owner ? ' · ' + esc(p.owner) : '') + '</div></span></label>'
+  ).join('');
+  const boxes = [...box.querySelectorAll('input')];
+  const limit = () => {
+    const full = boxes.filter(b => b.checked).length >= 3;
+    boxes.forEach(b => { b.disabled = full && !b.checked; b.closest('label').classList.toggle('off', b.disabled); });
+  };
+  limit();
+  boxes.forEach(b => b.addEventListener('change', async () => {
+    limit();
+    // keep the order they were ticked in the list
+    const picks = boxes.filter(x => x.checked).map(x => items[+x.closest('label').dataset.i])
+      .map(p => ({uri: p.uri, name: p.name, image: p.image}));
+    await saveSettings({playlists: picks});
+    plSig = '';
+    if(lastState) renderPlaylists(SET);
+  }));
 }
 
 function renderGigs(g){
@@ -3061,6 +3182,7 @@ async function poll(){
     renderHistory(s.history);
     renderAotd(s.aotd);
     renderGigs(s.concerts);
+    renderPlaylists(s.settings);
     renderLyrics(s.lyrics);
     fitLyrics();
     renderSides(s);
