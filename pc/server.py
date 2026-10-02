@@ -1083,6 +1083,17 @@ def spotify_control(action, value=None):
         url = base + "/pause"
     elif action == "play":
         url = base + "/play"
+    elif action in ("next", "previous"):
+        try:
+            _spotify_call("POST", f"{base}/{action}", data=b"")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return False, "No active Spotify device."
+            if e.code == 403:
+                return False, "Spotify won't allow that (it needs Premium)."
+            return False, f"Spotify said no ({e.code})."
+        WAKE_SPOTIFY.set()
+        return True, ""
     elif action == "skipto":
         # Jump ahead to a queued song by skipping; the rest of the queue stays.
         n = max(1, min(20, int(value) + 1))
@@ -1692,12 +1703,33 @@ def local_now_playing(service):
     }
 
 
+def _spotify_art_now(title):
+    """The cover of whatever Spotify says is playing, if it's this song."""
+    if cfg("service", "spotify") != "spotify" or not _load_tokens().get("refresh_token"):
+        return ""
+    try:
+        _, j = _spotify_call("GET", "https://api.spotify.com/v1/me/player/currently-playing")
+        item = (j or {}).get("item") or {}
+        norm = lambda t: re.sub(r"[^a-z0-9]", "", (t or "").lower())
+        if not item or norm(item.get("name")) != norm(title):
+            return ""                     # a different song - don't borrow its cover
+        imgs = (item.get("album") or {}).get("images") or []
+        return imgs[0].get("url", "") if imgs else ""
+    except Exception:
+        return ""
+
+
 def art_for(artist, title, album):
     """Apple Music's AppleScript won't hand over artwork, so look it up."""
     key = (artist + "|" + (album or title)).lower()
     if key in _ART_LOOKUP:
         return _ART_LOOKUP[key]
-    url = ""
+    # Spotify first when it's the one playing: its cover is exact, where an
+    # iTunes search misses smaller artists entirely and the label came up blank.
+    url = _spotify_art_now(title)
+    if url:
+        _ART_LOOKUP[key] = url
+        return url
     try:
         first = (artist or "").split(",")[0].split("&")[0].strip()
         q = urllib.parse.quote(f"{first} {album or title}")

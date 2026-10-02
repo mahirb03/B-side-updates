@@ -1060,6 +1060,7 @@ body.compact .gear{display:none}
 .ctl[hidden]{display:none}
 .ctl-play{
   width:36px;height:36px;border-radius:50%;display:grid;place-items:center;
+  padding:0;   /* a general button rule's 11px sides left the icon 1px off-centre */
   background:var(--pine-hi);border:0;cursor:pointer;color:#0f1a14;
   transition:transform .12s, filter .15s;
 }
@@ -3741,10 +3742,36 @@ $('winClean').addEventListener('click', () => setClean(!clean));
 $('cleanExit').addEventListener('click', () => setClean(false));
 $('recBtn').addEventListener('click', () => setClean(true));
 
+let skipBusy = false;
+async function keySkip(dir){
+  if(skipBusy) return;                  // a held key mustn't fire twenty skips
+  skipBusy = true;
+  await control(dir);
+  setTimeout(() => { skipBusy = false; lastKey = '~'; poll(); }, 450);
+}
+
 document.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   const typing = document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName);
   if(typing) return;
+  // Playback from the keyboard: arrows skip, space plays and pauses. Not
+  // while a sheet or the crate is open - arrows and space mean other things
+  // there - and not with modifiers, so Win/Cmd+arrow still snap the window.
+  const overlay = !$('settings').hidden || !$('setup').hidden || ($('crate') && !$('crate').hidden);
+  if(!overlay && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey){
+    if(e.key === 'ArrowRight' || e.key === 'ArrowLeft'){
+      e.preventDefault();
+      keySkip(e.key === 'ArrowRight' ? 'next' : 'previous');
+      return;
+    }
+    if(e.key === ' ' || e.code === 'Space'){
+      e.preventDefault();               // no page scroll, no double-press of a focused button
+      if(e.repeat) return;              // holding space: one toggle, not a stutter
+      if(!$('ctl').hidden) $('ctlPlay').click();
+      else deckClick();                 // nothing loaded: start the player, as a click would
+      return;
+    }
+  }
   if(k === 'r' && !e.ctrlKey && !e.metaKey && !e.altKey){ setClean(!clean); return; }
   if(k === 'f' && !clean) toggleFullscreen();
   if(e.key === 'Escape'){
