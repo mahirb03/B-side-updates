@@ -572,6 +572,7 @@ body.clean .resizer,body.clean .md-goal{display:none!important}
 body.clean .wrap{display:grid!important;place-items:center;
   grid-template-columns:1fr!important;padding:2vh 0!important;min-height:100vh}
 body.clean .centre{grid-column:1/-1!important;justify-self:center}
+body.clean .track{max-width:min(70ch,90vw)}   /* credits wrap less when there's the width */
 body.clean .deck,body.clean.widget .deck{
   /* height left after the title block (~230px), over the plinth's 1.22x reach */
   --dw:min(calc((100vh - 230px) / 1.22), calc(88vw / 1.22))!important;
@@ -3331,6 +3332,7 @@ async function poll(){
     renderPlaylists(s.settings);
     renderLyrics(s.lyrics);
     fitLyrics();
+    if(document.body.classList.contains('clean')) fitClean();   // class, not the variable: this runs before it's declared
     renderSides(s);
     renderUpdate(s.update);
     renderRoom(s);
@@ -3724,6 +3726,21 @@ document.addEventListener('fullscreenchange', () => {
 /* Record only: fullscreen, nothing but the turntable. Leaving puts the
    window back exactly as it was, fullscreen or not. */
 let clean = false, cleanWasFull = false, cleanHintTimer;
+/* The record view sizes the deck to whatever is actually under it - a long
+   credits line can take four rows, and a fixed allowance pushed the play
+   controls off the bottom. */
+function fitClean(){
+  const d = $('deck');
+  if(!document.body.classList.contains('clean')){ d.style.removeProperty('width'); d.style.removeProperty('margin'); return; }
+  const t = document.querySelector('.track');
+  const below = (t ? t.offsetHeight : 200) + 24;           // title block + breathing room
+  const room = innerHeight * 0.96 - below;                 // .wrap keeps 2vh top and bottom
+  const dw = Math.max(160, Math.min(room / 1.22, innerWidth * 0.88 / 1.22));
+  d.style.setProperty('width', Math.round(dw) + 'px', 'important');
+  d.style.setProperty('margin', Math.round(dw * .11) + 'px', 'important');
+}
+addEventListener('resize', fitClean);
+
 function setClean(on){
   if(on === clean) return;
   clean = on;
@@ -3731,13 +3748,14 @@ function setClean(on){
     cleanWasFull = isFull;
     if(compact) setCompact(false);
     document.body.classList.add('clean');
-    if(typeof fitLyrics === 'function') requestAnimationFrame(fitLyrics);
+    requestAnimationFrame(() => { fitClean(); if(typeof fitLyrics === 'function') fitLyrics(); });
     if(!isFull) setFullscreen(true);
     $('cleanHint').classList.add('on');
     clearTimeout(cleanHintTimer);
     cleanHintTimer = setTimeout(() => $('cleanHint').classList.remove('on'), 2500);
   }else{
     document.body.classList.remove('clean');
+    fitClean();
     if(typeof fitLyrics === 'function') requestAnimationFrame(fitLyrics);
     $('cleanHint').classList.remove('on');
     if(isFull && !cleanWasFull) setFullscreen(false);
