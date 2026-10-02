@@ -547,8 +547,8 @@ body.compact .crate-btn{display:none}
 
 /* ------------------------------------------------------- record only
    Everything but the turntable steps out: panels, title, controls, banner,
-   buttons. The deck grows to fill the screen. Esc, R or a double-click
-   brings it all back. */
+   buttons. The deck grows to fill the screen and still works as normal.
+   Esc, R or the Exit button (shown while the mouse moves) brings it back. */
 body.clean .flank,body.clean .track,body.clean .side,body.clean .md-wrap,
 body.clean .gear,body.clean .crate-btn,body.clean .upbar,body.clean .bar,
 body.clean .connect,body.clean .lyr-stage,body.clean #dragBar,
@@ -567,6 +567,15 @@ body.clean.show-bar{cursor:auto}
   font-size:12px;letter-spacing:.08em;color:var(--ink-3);background:rgba(0,0,0,.35);
   padding:6px 12px;border-radius:999px;opacity:0;transition:opacity .6s;pointer-events:none}
 body.clean .clean-hint.on{opacity:1}
+/* Leaving the record view: a small button that only shows while the mouse
+   moves, so the screen stays clean when nobody's touching it. */
+.clean-exit{display:none}
+body.clean .clean-exit{display:block;position:fixed;top:16px;right:16px;z-index:61;
+  font:500 12px/1 var(--sans);letter-spacing:.06em;color:var(--ink-2);
+  background:rgba(0,0,0,.4);border:1px solid var(--line);border-radius:999px;
+  padding:8px 14px;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .4s}
+body.clean.show-bar .clean-exit{opacity:1;pointer-events:auto}
+body.clean .clean-exit:hover{color:var(--ink);border-color:var(--ink-3)}
 
 /* ---------------------------------------------------------------- clock */
 .clock{line-height:1}
@@ -810,6 +819,12 @@ body.goal-on .wrap{filter:brightness(.5);transition:filter .3s}
 .pl-pick .n{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pl-pick .c{font-size:11px;color:var(--ink-3)}
 .pl-pick .empty{font-size:13px;color:var(--ink-3);padding:10px}
+.pl-search{font:inherit;font-size:13px;color:var(--ink);background:var(--bg-2);
+  border:1px solid var(--line);border-radius:999px;padding:8px 14px;width:100%;
+  margin-bottom:8px;outline:none}
+.pl-search:focus{border-color:var(--ink-3)}
+.pl-search[hidden]{display:none}
+.pl-pick label[hidden]{display:none}
 
 /* Quietly offers a new version. Sits above the gear, dismissable, and never
    installs anything without being asked. */
@@ -1401,7 +1416,8 @@ body.compact.has-art .grooves{opacity:.35}
   <button id="winClose" title="Close">&times;</button>
 </div>
 <div class="resizer" id="resizer" title="Drag to resize"></div>
-<div class="clean-hint" id="cleanHint">Esc or R to bring everything back</div>
+<div class="clean-hint" id="cleanHint">Esc, R or Exit to bring everything back</div>
+<button class="clean-exit" id="cleanExit" aria-label="Leave record-only view">Exit</button>
 
 <div class="wrap">
 
@@ -1655,6 +1671,7 @@ body.compact.has-art .grooves{opacity:.35}
 
     <div class="step" id="plStep">
       <h2>Playlists</h2>
+      <input class="pl-search" id="plSearch" type="search" placeholder="Search your playlists" aria-label="Search your playlists" autocomplete="off" hidden>
       <div class="pl-pick" id="plPick"><div class="empty">Loading your playlists&hellip;</div></div>
       <p class="hint">Tick up to three. They show in the Playlists panel with play and shuffle.</p>
     </div>
@@ -2359,6 +2376,7 @@ async function loadPlaylistPicker(){
   const box = $('plPick');
   $('plStep').hidden = (SET && SET.service || 'spotify') !== 'spotify';
   if($('plStep').hidden) return;
+  $('plSearch').hidden = true;
   box.innerHTML = '<div class="empty">Loading your playlists…</div>';
   let j;
   try{ j = await (await fetch('/api/playlists', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})).json(); }
@@ -2381,6 +2399,25 @@ async function loadPlaylistPicker(){
     + p.tracks + (p.tracks === 1 ? ' song' : ' songs') + (p.owner ? ' · ' + esc(p.owner) : '') + '</div></span></label>'
   ).join('');
   const boxes = [...box.querySelectorAll('input')];
+  const q = $('plSearch');
+  q.hidden = items.length < 6;          // a handful needs no search
+  q.value = '';
+  q.oninput = () => {
+    const t = q.value.trim().toLowerCase();
+    let shown = 0;
+    box.querySelectorAll('label').forEach(l => {
+      const p = items[+l.dataset.i];
+      const hit = !t || (p.name || '').toLowerCase().includes(t)
+                     || (p.owner || '').toLowerCase().includes(t)
+                     || l.querySelector('input').checked;   // your picks never vanish
+      l.hidden = !hit; if(hit) shown++;
+    });
+    let none = box.querySelector('.empty.nohit');
+    if(!shown){
+      if(!none){ none = document.createElement('div'); none.className = 'empty nohit'; box.appendChild(none); }
+      none.textContent = 'No playlist matches \u201c' + q.value.trim() + '\u201d.';
+    }else if(none) none.remove();
+  };
   const limit = () => {
     const full = boxes.filter(b => b.checked).length >= 3;
     boxes.forEach(b => { b.disabled = full && !b.checked; b.closest('label').classList.toggle('off', b.disabled); });
@@ -3507,9 +3544,6 @@ $('guestConnectBtn').addEventListener('click', () => $('connectBtn').click());
 
 // Clicking the record opens the music app and starts it playing.
 async function deckClick(){
-  // In the record-only view a double-click means "come back", and its two
-  // clicks mustn't switch the turntable's plug off and on again.
-  if(typeof clean !== 'undefined' && clean) return;
   if(compact){ setCompact(false); return; }
   if(deckPlug){
     const on = !deckPlug.on;
@@ -3628,7 +3662,7 @@ function setClean(on){
   }
 }
 $('winClean').addEventListener('click', () => setClean(!clean));
-document.addEventListener('dblclick', e => { if(clean){ e.preventDefault(); setClean(false); } });
+$('cleanExit').addEventListener('click', () => setClean(false));
 
 document.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
