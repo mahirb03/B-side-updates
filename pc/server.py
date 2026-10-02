@@ -1594,7 +1594,13 @@ def _win_now_playing(service):
                 "ts": time.time(), "source": service,
                 "progress_ms": max(0, pos), "duration_ms": max(0, dur),
                 "uri": "", "is_playing": playing,
-                "volume": 50, "supports_volume": False,
+                # Windows' media layer can't set volume, but with Spotify
+                # linked the control falls through to Spotify's own API - so
+                # the bars stay live. No made-up level either: a fixed 50
+                # snapped the bars back to the middle on every poll.
+                "volume": None,
+                "supports_volume": service == "spotify"
+                                   and bool(_load_tokens().get("refresh_token")),
                 "device": "This PC"}
 
     try:
