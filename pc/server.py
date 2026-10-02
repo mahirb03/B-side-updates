@@ -4196,6 +4196,23 @@ def demo_football():
 
 # ---------------------------------------------------------------- server
 
+def _bundled(name):
+    """Find one of the app's own files. After an update the app runs from the
+    settings folder, but updates only bring server.py and index.html - so the
+    phone page for song requests has to be found wherever it actually lives:
+    beside us, in the settings folder, inside the app, or next to the exe."""
+    places = [HERE, USER_DIR, getattr(sys, "_MEIPASS", ""),
+              os.path.dirname(os.path.abspath(sys.executable)),
+              os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(sys.executable))), "Resources"),
+              os.path.dirname(os.path.abspath(__file__))]
+    for d in places:
+        if d:
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return p
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -4228,10 +4245,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/guest":
-            try:
-                with open(os.path.join(HERE, "guest.html"), "rb") as f:
+            p = _bundled("guest.html")
+            if p:
+                with open(p, "rb") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
-            except FileNotFoundError:
+            else:
                 self._send(404, "guest.html missing", "text/plain")
             return
 
