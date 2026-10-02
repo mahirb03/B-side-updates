@@ -1706,6 +1706,37 @@ def open_player(service):
     return True, ""
 
 
+_WEB_POS = {"key": None, "ms": 0, "dur": 0, "at": 0.0, "playing": None}
+
+def _borrow_position(track):
+    """Fill progress_ms / duration_ms from the Spotify web API. Asks at most
+    every ten seconds (and straight away on a new song); in between it runs
+    the clock forward itself, which is all the page does anyway."""
+    key = (track.get("title") or "").strip().lower()
+    now = time.time()
+    playing = bool(track.get("is_playing", True))
+    if (key != _WEB_POS["key"] or now - _WEB_POS["at"] > 10
+            or playing != _WEB_POS["playing"]):        # pause/resume: re-read now
+        try:
+            api = spotify_now_playing()
+        except Exception as e:
+            api = None
+            log("spotify web (position):", e)
+        if api and (api.get("title") or "").strip().lower() == key and api.get("duration_ms"):
+            _WEB_POS.update(key=key, ms=int(api.get("progress_ms") or 0),
+                            dur=int(api["duration_ms"]), at=now, playing=playing)
+        elif key != _WEB_POS["key"]:
+            _WEB_POS.update(key=None)
+            return
+    if _WEB_POS["key"] != key:
+        return
+    ms = _WEB_POS["ms"]
+    if playing:
+        ms += int((now - _WEB_POS["at"]) * 1000)
+    track["duration_ms"] = _WEB_POS["dur"]
+    track["progress_ms"] = min(ms, _WEB_POS["dur"])
+
+
 def player_loop():
     """Follow whichever app the person chose, every couple of seconds."""
     load_last_track()
@@ -1727,6 +1758,13 @@ def player_loop():
                     track = spotify_now_playing()
                 except Exception as e:
                     log("spotify web:", e)
+
+            # Spotify's Windows app names the song to the system but often
+            # leaves position and length at zero - so no lyric line can light
+            # up and the arm can't travel. Borrow them from the web API.
+            if (track and not track.get("duration_ms") and service == "spotify"
+                    and _load_tokens().get("refresh_token")):
+                _borrow_position(track)
 
             if service == "spotify":
                 granted = _load_tokens().get("scope", "")
@@ -3428,11 +3466,155 @@ def start_modules():
     # this a friend's Mac would scan the LAN for WiZ bulbs every minute and
     # macOS would ask them about 'local network access' for no reason.
     threading.Thread(target=listen_loop, daemon=True).start()   # gated on cfg('listen')
+    threading.Thread(target=crate_loop, daemon=True).start()    # gated on discogs_username
     if _has_room():
         for fn in (ac_loop, wiz_loop, st_loop):
             threading.Thread(target=fn, daemon=True).start()
         log("room: smart-home config found, looking for devices")
     log("modules: panels running")
+
+
+# ------------------------------------------------------------------ crate
+# A random record from your Discogs collection, shown on the idle platter.
+
+_CRATE = []
+
+
+def _discogs(url):
+    headers = {"User-Agent": "DeskDashboard/1.0"}
+    tok = cfg("discogs_token")
+    if tok:
+        headers["Authorization"] = "Discogs token=" + tok
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def load_crate(user):
+    """Every release in the collection's 'All' folder (folder 0)."""
+    out, page, pages = [], 1, 1
+    while page <= pages and page <= 40:
+        j = _discogs(f"https://api.discogs.com/users/{urllib.parse.quote(user)}"
+                     f"/collection/folders/0/releases?per_page=100&page={page}")
+        pages = int((j.get("pagination") or {}).get("pages") or 1)
+        for rel in j.get("releases") or []:
+            b = rel.get("basic_information") or {}
+            # Discogs disambiguates same-named artists as "Name (2)"; drop that.
+            artists = ", ".join(re.sub(r"\s\(\d+\)$", "", a.get("name", ""))
+                                for a in b.get("artists") or [])
+            out.append({
+                "title": b.get("title", ""),
+                "artist": artists,
+                "year": b.get("year") or "",
+                "art": b.get("cover_image") or b.get("thumb") or "",
+                "url": f"https://www.discogs.com/release/{b.get('id')}" if b.get("id") else "",
+            })
+        page += 1
+        time.sleep(2.5)      # unauthenticated limit is 25 requests a minute
+    return out
+
+
+COVER_CACHE = os.path.join(USER_DIR, "covers_cache.json")
+
+def _clean(t):
+    t = re.sub(r"\s*[\(\[][^)\]]*[\)\]]", "", t or "")   # (Remastered), [Deluxe] ...
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+def official_cover(artist, title):
+    """Studio artwork from Spotify, else Apple Music. '' if neither knows it."""
+    first = (artist or "").split(",")[0].strip()
+    want = _clean(title)
+    try:
+        q = urllib.parse.quote(f'album:{_clean(title)} artist:{first}')
+        _, j = _spotify_call("GET", f"https://api.spotify.com/v1/search?type=album&limit=5&q={q}")
+        items = (j.get("albums") or {}).get("items") or []
+        items.sort(key=lambda a: _clean(a.get("name")) != want)   # exact title first
+        for a in items:
+            if a.get("images"):
+                return a["images"][0]["url"]
+    except Exception:
+        pass
+    try:
+        q = urllib.parse.quote(f"{first} {_clean(title)}")
+        req = urllib.request.Request(
+            f"https://itunes.apple.com/search?entity=album&limit=5&term={q}",
+            headers={"User-Agent": "desk-dashboard/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            res = json.loads(r.read().decode("utf-8")).get("results") or []
+        res.sort(key=lambda a: _clean(a.get("collectionName")) != want)
+        for a in res:
+            if a.get("artworkUrl100"):
+                return a["artworkUrl100"].replace("100x100bb", "1000x1000bb")
+    except Exception:
+        pass
+    return ""
+
+def swap_covers(recs):
+    """Replace Discogs' user photos with official art, cached between runs."""
+    try:
+        with open(COVER_CACHE, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+    except Exception:
+        cache = {}
+    changed = False
+    for r in recs:
+        key = (r["artist"] + " | " + r["title"]).lower()
+        if not cache.get(key):                 # misses are retried next load
+            url = official_cover(r["artist"], r["title"])
+            time.sleep(0.3)
+            if url:
+                cache[key] = url
+                changed = True
+        if cache.get(key):
+            r["discogs_art"] = r["art"]
+            r["art"] = cache[key]
+    if changed:
+        try:
+            with open(COVER_CACHE, "w", encoding="utf-8") as f:
+                json.dump(cache, f)
+        except Exception:
+            pass
+    found = sum(1 for r in recs if r.get("discogs_art"))
+    log(f"crate: official covers for {found}/{len(recs)} records")
+    return recs
+
+
+def shuffle_crate():
+    import random
+    if _CRATE:
+        cur = (get_state().get("crate") or {}).get("title")
+        choices = [r for r in _CRATE if r["title"] != cur] or _CRATE
+        set_state(crate=random.choice(choices))
+
+
+def crate_loop():
+    user = cfg("discogs_username")
+    if not user:
+        log("crate: no discogs_username, skipping")
+        return
+    rotate = int(cfg("crate_rotate_minutes", 20)) * 60
+    loaded_at = 0
+    while True:
+        try:
+            if time.time() - loaded_at > 12 * 3600 or not _CRATE:
+                recs = load_crate(user)
+                if recs:
+                    _CRATE[:] = recs            # show something straight away
+                    recs = swap_covers([dict(r) for r in recs])
+                if recs:
+                    _CRATE[:] = recs
+                    loaded_at = time.time()
+                    log(f"crate: {len(recs)} records in {user}'s collection")
+                else:
+                    log(f"crate: {user}'s collection came back empty — is it set to public?")
+            shuffle_crate()
+        except urllib.error.HTTPError as e:
+            log("crate:", e.code, "— check discogs_username, and that the collection is public")
+            time.sleep(1800)
+            continue
+        except Exception as e:
+            log("crate:", e)
+        time.sleep(rotate)
 
 
 # ------------------------------------------------------------ liner notes
@@ -4066,6 +4248,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if path == "/api/crate":
+            self._send(200, json.dumps({"records": _CRATE}))
+            return
+
         if path == "/api/state":
             s = get_state()
             s["v"] = STATE_VERSION
@@ -4090,6 +4276,11 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(raw.decode("utf-8") or "{}")
         except Exception:
             data = {}
+
+        if path == "/api/crate/shuffle":
+            shuffle_crate()
+            self._send(200, json.dumps({"ok": True, "crate": get_state().get("crate")}))
+            return
 
         if path == "/api/ac":
             ok, msg = ac_control(data.get("action"), data.get("value"))

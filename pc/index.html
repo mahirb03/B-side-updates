@@ -86,7 +86,12 @@ body{
   }
   /* 1.22 = the plinth's overhang on both sides of the record */
 
-  .flank{width:100%;align-items:stretch;text-align:left}
+  .flank{width:100%;align-items:stretch;text-align:left;
+    /* never taller than the window: a long lamp list used to stretch the
+       grid row and push the clock off the bottom on a 150%-scaled screen */
+    max-height:calc(100vh - 8vmin);overflow-y:auto;scrollbar-width:none;
+    justify-content:safe center;overscroll-behavior:contain}
+  .flank::-webkit-scrollbar{display:none}
   .flank-l{justify-self:stretch;max-width:34ch}
   .flank-r{justify-self:end;max-width:34ch;width:100%}
   .centre{grid-column:2;order:0}
@@ -430,6 +435,116 @@ body:not(.playing) .tk-title{color:var(--ink-3);font-weight:300}
 .st-connect .ac-tag{border:0;cursor:pointer;background:rgba(95,154,124,.15);color:var(--ink-2)}
 body.compact .room{display:none}
 
+/* ------------------------------------------------------------------ crate */
+.crate-btn[hidden]{display:none}
+.crate-btn{
+  position:fixed;left:66px;bottom:13px;z-index:15;
+  width:44px;height:44px;border-radius:12px;
+  display:grid;place-items:center;
+  background:rgba(255,255,255,.04);border:0;cursor:pointer;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);
+  -webkit-app-region:no-drag;transition:background .15s, transform .15s;
+}
+.crate-btn:hover{background:rgba(255,255,255,.09);transform:translateY(-1px)}
+.crate-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.crate-btn svg{width:26px;height:26px}
+.crate-btn .s1{fill:var(--accent);opacity:.75}
+.crate-btn .s2{fill:var(--ink-2)}
+.crate-btn .box{fill:#6b4a2b;stroke:#3b2816;stroke-width:1}
+.crate-btn .slot{stroke:#2a1c10;stroke-width:2;stroke-linecap:round}
+body.compact .crate-btn{display:none}
+
+.ac-msg{position:absolute;left:50%;transform:translateX(-50%);top:calc(100% + 4px);font-size:11px;color:#ff8a8d;white-space:nowrap}
+
+.crate{
+  position:fixed;inset:0;z-index:40;
+  display:grid;place-items:center;
+  background:rgba(8,7,6,.72);backdrop-filter:blur(8px);
+  animation:crateIn .2s ease-out;
+  -webkit-app-region:no-drag;
+}
+.crate[hidden]{display:none}
+@keyframes crateIn{from{opacity:0}to{opacity:1}}
+.crate-panel{
+  width:min(1180px, calc(100vw - 32px));
+  height:min(820px, calc(100vh - 48px));
+  display:flex;flex-direction:column;
+  background:#171412;border-radius:18px;
+  box-shadow:0 30px 80px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.07);
+  overflow:hidden;
+}
+.crate-head{
+  display:flex;align-items:center;gap:12px;
+  padding:18px 20px;border-bottom:1px solid var(--line);
+}
+.crate-head h2{font-family:var(--serif);font-weight:500;font-size:24px;letter-spacing:-.01em}
+.crate-count{font-size:12px;color:var(--ink-3);margin-top:2px}
+.crate-head > div:first-child{margin-right:auto}
+.crate-search{
+  font:inherit;font-size:14px;color:var(--ink);
+  background:var(--bg-2);border:1px solid var(--line);border-radius:999px;
+  padding:9px 14px;width:min(260px,30vw);outline:none;
+}
+.crate-search:focus{border-color:var(--ink-3)}
+.crate-shuffle{
+  font:500 14px/1 var(--sans);color:#141210;
+  background:var(--accent);border:0;border-radius:999px;
+  padding:10px 18px;cursor:pointer;
+}
+.crate-shuffle:hover{filter:brightness(1.1)}
+.crate-x{
+  width:38px;height:38px;border-radius:50%;border:0;cursor:pointer;
+  background:transparent;color:var(--ink-3);font-size:22px;line-height:1;
+}
+.crate-x:hover{background:var(--bg-2);color:var(--ink)}
+.crate-head button:focus-visible,.crate-search:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.crate-grid{
+  flex:1;overflow-y:auto;
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
+  gap:22px 18px;
+  padding:20px;
+  align-content:start;
+}
+.sleeve{
+  cursor:pointer;border:0;background:none;text-align:left;color:inherit;padding:0;
+  display:flex;flex-direction:column;gap:8px;
+}
+.sleeve .cv{
+  aspect-ratio:1;width:100%;border-radius:4px;object-fit:cover;display:block;
+  background:#221e1a;
+  box-shadow:0 6px 16px rgba(0,0,0,.45);
+  transition:transform .18s, box-shadow .18s;
+}
+.sleeve:hover .cv,.sleeve:focus-visible .cv{transform:translateY(-4px);box-shadow:0 12px 24px rgba(0,0,0,.55)}
+.sleeve:focus-visible{outline:none}
+.sleeve .t{font-size:13px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sleeve .a{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sleeve.lit .cv{box-shadow:0 0 0 3px var(--accent), 0 12px 24px rgba(0,0,0,.55);transform:translateY(-4px)}
+.crate-empty{grid-column:1/-1;color:var(--ink-3);font-size:14px;padding:40px 0;text-align:center;line-height:1.6}
+
+/* the chosen record */
+.crate-pick{
+  display:grid;grid-template-columns:auto 1fr;gap:26px;align-items:center;
+  padding:22px 24px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%);
+  animation:pickIn .35s ease-out;
+}
+.crate-pick[hidden]{display:none}
+@keyframes pickIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.crate-pick img{width:clamp(120px,16vh,180px);aspect-ratio:1;border-radius:4px;object-fit:cover;box-shadow:0 14px 30px rgba(0,0,0,.55)}
+.crate-pick .k{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.crate-pick .pt{font-family:var(--serif);font-weight:500;font-size:clamp(24px,3vw,38px);line-height:1.1;margin-top:6px}
+.crate-pick .pa{font-size:16px;color:var(--ink-2);margin-top:6px}
+.crate-pick .acts{display:flex;gap:10px;margin-top:14px}
+.crate-pick .acts button,.crate-pick .acts span{
+  font:500 13px/1 var(--sans);border-radius:999px;padding:9px 15px;cursor:pointer;
+  background:transparent;color:var(--ink-2);border:1px solid var(--line);
+}
+.crate-pick .acts button:hover,.crate-pick .acts span:hover{color:var(--ink);border-color:var(--ink-3)}
+@media (prefers-reduced-motion:reduce){.crate,.crate-pick{animation:none}}
+
 /* ---------------------------------------------------------------- clock */
 .clock{line-height:1}
 .hm{
@@ -683,28 +798,40 @@ body.goal-on .wrap{filter:brightness(.5);transition:filter .3s}
 .lyr-btn.on{color:var(--accent);border-color:var(--accent-2)}
 
 .lyr-stage{
-  width:min(84vw,66vmin);aspect-ratio:1;
-  display:flex;align-items:center;
+  /* A fixed box, not aspect-ratio: an aspect-ratio box grows to fit its
+     content, so a long song used to stretch the page and shove the side
+     panels down. */
+  /* Only the height that's actually free: what's left once the title block
+     underneath (~210px) is paid for. The live-banner case is below. */
+  width:min(84vw,78vmin);height:max(180px, min(70vh, 78vmin, calc(100vh - 210px)));min-height:0;
+  display:flex;align-items:stretch;
   -webkit-app-region:no-drag;
 }
 .lyr-stage[hidden]{display:none}
+body.has-live .lyr-stage{height:max(180px, min(70vh, 78vmin, calc(100vh - 210px - var(--md-h, 0px) - var(--md-top) - 18px)))}
 body.lyrics-on .stack{display:none}
 
 .lyr-scroll{
-  width:100%;max-height:100%;overflow-y:auto;
+  position:relative;width:100%;height:100%;overflow-y:auto;overscroll-behavior:contain;
   scrollbar-width:none;
-  mask-image:linear-gradient(180deg,transparent,#000 18%,#000 82%,transparent);
+  mask-image:linear-gradient(180deg,transparent,#000 22%,#000 78%,transparent);
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 22%,#000 78%,transparent);
 }
 .lyr-scroll::-webkit-scrollbar{display:none}
 .lyr-scroll .ln{
-  font-size:clamp(14px,2.1vmin,22px);line-height:1.45;
-  padding:clamp(4px,.8vmin,10px) 0;
-  color:var(--ink-3);opacity:.4;
-  transition:color .35s, opacity .35s;
+  font-size:clamp(15px,2.3vmin,24px);line-height:1.4;
+  padding:clamp(4px,.7vmin,9px) 0;
+  color:var(--ink-2);opacity:.38;
+  transform-origin:center;
+  transition:color .35s, opacity .35s, transform .35s;
 }
-.lyr-scroll .ln.on{color:var(--ink);opacity:1;font-family:var(--serif)}
+/* the lines either side of the current one, so the eye can find its place */
+.lyr-scroll .ln.near{opacity:.62}
+.lyr-scroll .ln.on{color:var(--ink);opacity:1;transform:scale(1.08)}
 .lyr-scroll .ln.blank{min-height:.5em}
-.lyr-scroll .pad{height:34%}
+.lyr-scroll .pad{height:45%}
+/* untimed lyrics have no 'current' line - just make them readable */
+.lyr-scroll.plain .ln{opacity:.85}
 .lyr-note{color:var(--ink-3);font-size:clamp(11px,1.4vmin,14px);opacity:.6;text-align:center;width:100%}
 
 /* --------------------------------------------------- settings and setup */
@@ -1338,6 +1465,31 @@ body.compact.has-art .grooves{opacity:.35}
     <div class="panel" data-panel="sport"><div class="fb" id="fb" hidden></div></div>
   </div>
 
+</div>
+
+<button class="crate-btn" id="crateBtn" hidden title="Browse your crate (C)" aria-label="Browse your crate">
+  <svg viewBox="0 0 32 32" aria-hidden="true">
+    <rect x="6" y="3" width="17" height="17" rx="1.5" transform="rotate(-8 14 12)" class="s1"/>
+    <rect x="9" y="4" width="17" height="17" rx="1.5" transform="rotate(6 17 12)" class="s2"/>
+    <path d="M3 15h26v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" class="box"/>
+    <path d="M11 20h10" class="slot"/>
+  </svg>
+</button>
+
+<div class="crate" id="crate" hidden role="dialog" aria-modal="true" aria-labelledby="crateTitle">
+  <div class="crate-panel">
+    <header class="crate-head">
+      <div>
+        <h2 id="crateTitle">Your crate</h2>
+        <div class="crate-count" id="crateCount"></div>
+      </div>
+      <input class="crate-search" id="crateSearch" type="search" placeholder="Search your records" aria-label="Search your records">
+      <button class="crate-shuffle" id="crateShuffle">Shuffle</button>
+      <button class="crate-x" id="crateClose" aria-label="Close">&times;</button>
+    </header>
+    <div class="crate-pick" id="cratePick" hidden></div>
+    <div class="crate-grid" id="crateGrid"></div>
+  </div>
 </div>
 
 <button class="gear" id="gearBtn" title="Settings" aria-label="Settings">
@@ -2270,8 +2422,9 @@ $('upNow').addEventListener('click', async () => {
 let LYR = null, lyrKey = '', lyrAt = -1, lyrOpen = false;
 
 function lyrElapsed(){
-  if(!prog) return null;
-  return prog.ms + (document.body.classList.contains('playing') ? Date.now() - prog.at : 0);
+  const c = prog || lyrClock;
+  if(!c) return null;
+  return c.ms + (document.body.classList.contains('playing') ? Date.now() - c.at : 0);
 }
 
 function lyrIndex(){
@@ -2296,6 +2449,8 @@ function lyrDraw(){
         + '</div>').join('')
     + (LYR.synced ? '' : '<div class="lyr-note">Not timed for this track.</div>')
     + '<div class="pad"></div>';
+  body.classList.toggle('plain', !LYR.synced);
+  body.scrollTop = 0;
   LYR.scrolledTo = -1;
   lyrAt = -1;
 }
@@ -2305,14 +2460,40 @@ function paintLyrics(){
   const at = lyrIndex();
   if(at === lyrAt) return;
   lyrAt = at;
-  const rows = $('lyrStageBody').querySelectorAll('.ln');
-  rows.forEach((r, i) => r.classList.toggle('on', i === at));
+  const box = $('lyrStageBody');
+  const rows = box.querySelectorAll('.ln');
+  rows.forEach((r, i) => {
+    r.classList.toggle('on', i === at);
+    r.classList.toggle('near', at >= 0 && i !== at && Math.abs(i - at) === 1);
+  });
   if(at >= 0 && rows[at] && at !== LYR.scrolledTo){
     LYR.scrolledTo = at;
-    rows[at].scrollIntoView({block:'center', behavior:'smooth'});
+    // Scroll only the lyrics box. scrollIntoView scrolls every ancestor too,
+    // page included - which is what dragged the clock off the bottom.
+    const r = rows[at];
+    box.scrollTo({top: r.offsetTop - box.clientHeight / 2 + r.offsetHeight / 2,
+                  behavior: 'smooth'});
   }
 }
 setInterval(paintLyrics, 250);
+
+/* Size the words to the room actually left above the title and controls.
+   A fixed vh share overflowed short windows (a 1080p screen at 150% gives
+   the page ~480px), pushing the controls off the bottom. */
+function fitLyrics(){
+  const st = $('lyrStage');
+  if(!st || st.hidden) return;
+  const track = document.querySelector('.track');
+  const gap = parseFloat(getComputedStyle(document.querySelector('.centre')).rowGap) || 24;
+  // The page's real padding, not a guess: during a live match the top
+  // padding grows by the banner's height, and the words have to give way.
+  const ws = getComputedStyle(document.querySelector('.wrap'));
+  const pad = (parseFloat(ws.paddingTop) || 0) + (parseFloat(ws.paddingBottom) || 0);
+  const room = innerHeight - (track ? track.offsetHeight : 160) - gap - pad - 8;
+  const cap = Math.min(innerHeight * 0.7, Math.min(innerWidth, innerHeight) * 0.78);
+  st.style.height = Math.max(120, Math.min(cap, room)) + 'px';
+}
+addEventListener('resize', fitLyrics);
 
 function showLyrics(on){
   lyrOpen = on && !!LYR;
@@ -2320,7 +2501,7 @@ function showLyrics(on){
   $('lyrStage').hidden = !lyrOpen;
   $('lyrToggle').classList.toggle('on', lyrOpen);
   $('lyrToggle').textContent = lyrOpen ? 'Record' : 'Lyrics';
-  if(lyrOpen){ lyrDraw(); paintLyrics(); }
+  if(lyrOpen){ fitLyrics(); lyrDraw(); paintLyrics(); }
 }
 $('lyrToggle').addEventListener('click', e => {
   e.stopPropagation();
@@ -2788,7 +2969,14 @@ const ARM_START = 1.9;   // lead-in groove
 const ARM_END = 26.0;    // run-out, near the label
 let prog = null;   // {at, ms, total}
 
+/* Lyrics only need to know where in the song we are. Windows' media info
+   often gives a position but no length, which used to leave the needle AND
+   the lyrics without a clock - so the words get one of their own. */
+let lyrClock = null;   // {at, ms}
 function setProgress(np){
+  lyrClock = (np && typeof np.progress_ms === 'number')
+    ? {at: Date.now(), ms: np.progress_ms + (np.progress_at ? Math.max(0, Date.now() - np.progress_at * 1000) : 0)}
+    : null;
   if(!np || !np.duration_ms){
     prog = null;
     document.body.classList.remove('has-progress');
@@ -2856,7 +3044,8 @@ async function poll(){
     const shown = s.now_playing
       || (s.spotify_paused ? Object.assign({}, s.spotify_paused, {paused:true}) : null);
     lastTrack = s.last_track || lastTrack;
-    renderTrack(shown, null);
+    renderTrack(shown, s.crate || null);
+    $('crateBtn').hidden = !s.crate;
     document.body.classList.toggle('playing', !!(shown && !shown.paused));
     renderControls(s);
     spotifyOn = !!((s.now_playing && s.now_playing.source === 'spotify') || s.spotify_paused);
@@ -2873,6 +3062,7 @@ async function poll(){
     renderAotd(s.aotd);
     renderGigs(s.concerts);
     renderLyrics(s.lyrics);
+    fitLyrics();
     renderSides(s);
     renderUpdate(s.update);
     renderRoom(s);
@@ -3047,6 +3237,114 @@ function renderRoom(s){
   if(r) r.hidden = !($('ac').hidden === false || ($('lamps').children.length > 0)
                      || !$('idfBtn').hidden || !$('stConnect').hidden);
 }
+
+/* ---------------- the crate ---------------- */
+let crateRecs = [], crateLoaded = 0, shuffling = false;
+const coverSrc = u => u ? '/api/art?u=' + encodeURIComponent(u) : '';
+
+async function openCrate(){
+  $('crate').hidden = false;
+  document.body.classList.add('crate-open');
+  if(!crateRecs.length || Date.now() - crateLoaded > 10 * 60000){
+    $('crateGrid').innerHTML = '<div class="crate-empty">Loading your records\u2026</div>';
+    try{
+      crateRecs = (await (await fetch('/api/crate')).json()).records || [];
+      crateLoaded = Date.now();
+    }catch(e){ crateRecs = []; }
+  }
+  $('crateCount').textContent = crateRecs.length ? crateRecs.length + ' records' : '';
+  drawCrate();
+  setTimeout(() => $('crateSearch').focus(), 50);
+}
+function closeCrate(){
+  $('crate').hidden = true;
+  document.body.classList.remove('crate-open');
+  $('crateBtn').focus();
+}
+
+function drawCrate(){
+  const q = $('crateSearch').value.trim().toLowerCase();
+  const list = crateRecs
+    .map((r, i) => Object.assign({i}, r))
+    .filter(r => !q || (r.title + ' ' + r.artist + ' ' + r.year).toLowerCase().includes(q))
+    .sort((a, b) => a.artist.localeCompare(b.artist) || String(a.year).localeCompare(String(b.year)));
+  if(!crateRecs.length){
+    $('crateGrid').innerHTML = '<div class="crate-empty">Your crate is empty.<br>Add records to your Discogs collection and they\u2019ll show up here.</div>';
+    return;
+  }
+  if(!list.length){
+    $('crateGrid').innerHTML = '<div class="crate-empty">Nothing in your crate matches \u201c' + esc(q) + '\u201d.</div>';
+    return;
+  }
+  $('crateGrid').innerHTML = list.map(r =>
+    '<button class="sleeve" data-i="' + r.i + '">'
+    + '<img class="cv" loading="lazy" alt="" src="' + esc(coverSrc(r.art)) + '">'
+    + '<div><div class="t">' + esc(r.title) + '</div>'
+    + '<div class="a">' + esc(r.artist) + (r.year ? ' \u00b7 ' + esc(r.year) : '') + '</div></div>'
+    + '</button>').join('');
+}
+
+function showPick(i){
+  const r = crateRecs[i];
+  if(!r) return;
+  $('cratePick').innerHTML =
+      '<img alt="" src="' + esc(coverSrc(r.art)) + '">'
+    + '<div><div class="k">Tonight\u2019s pick</div>'
+    + '<div class="pt">' + esc(r.title) + '</div>'
+    + '<div class="pa">' + esc(r.artist) + (r.year ? ' \u00b7 ' + esc(r.year) : '') + '</div>'
+    + '<div class="acts"><button id="pickAgain">Pick another</button>'
+    + (r.url ? '<span data-open="' + esc(r.url) + '" role="link" tabindex="0">Discogs \u2197</span>' : '')
+    + '</div></div>';
+  $('cratePick').hidden = false;
+  $('pickAgain').addEventListener('click', shuffleCrate);
+}
+
+// Flick through the sleeves, slowing down, then land on one.
+function shuffleCrate(){
+  if(shuffling || !crateRecs.length) return;
+  $('crateSearch').value = ''; drawCrate();
+  const sleeves = [...document.querySelectorAll('.sleeve')];
+  const target = sleeves[Math.floor(Math.random() * sleeves.length)];
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduce || sleeves.length < 3){ land(target); return; }
+  shuffling = true;
+  let n = 0, delay = 45;
+  const steps = 18 + Math.floor(Math.random() * 6);
+  (function hop(){
+    sleeves.forEach(el => el.classList.remove('lit'));
+    const el = n >= steps ? target : sleeves[Math.floor(Math.random() * sleeves.length)];
+    el.classList.add('lit');
+    el.scrollIntoView({block:'nearest'});
+    if(n++ >= steps){ shuffling = false; land(el); return; }
+    delay *= 1.12;
+    setTimeout(hop, delay);
+  })();
+}
+function land(el){
+  document.querySelectorAll('.sleeve').forEach(x => x.classList.toggle('lit', x === el));
+  showPick(+el.dataset.i);
+  $('crate').querySelector('.crate-panel').scrollTop = 0;
+}
+
+$('crateBtn').addEventListener('click', openCrate);
+$('crateClose').addEventListener('click', closeCrate);
+$('crateShuffle').addEventListener('click', shuffleCrate);
+$('crateSearch').addEventListener('input', drawCrate);
+$('crate').addEventListener('click', e => { if(e.target === $('crate')) closeCrate(); });
+$('crateGrid').addEventListener('click', e => {
+  const b = e.target.closest('.sleeve'); if(!b) return;
+  document.querySelectorAll('.sleeve').forEach(x => x.classList.toggle('lit', x === b));
+  showPick(+b.dataset.i);
+});
+document.addEventListener('keydown', e => {
+  const typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+  if(!$('crate').hidden){
+    if(e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); closeCrate(); }
+    else if(!typing && e.key.toLowerCase() === 'r'){ shuffleCrate(); }
+    return;
+  }
+  if(!typing && e.key.toLowerCase() === 'c'){ openCrate(); }
+}, true);
 
 /* ---------------- the turntable ---------------- */
 $('connectBtn').addEventListener('click', async () => {
