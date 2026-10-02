@@ -92,8 +92,10 @@ body{
     max-height:calc(100vh - 8vmin);overflow-y:auto;scrollbar-width:none;
     justify-content:safe center;overscroll-behavior:contain}
   .flank::-webkit-scrollbar{display:none}
-  .flank-l{justify-self:stretch;max-width:34ch}
-  .flank-r{justify-self:end;max-width:34ch;width:100%}
+  /* room at the foot so the last panel scrolls clear of the gear, crate and
+     record buttons instead of sliding under them */
+  .flank-l{justify-self:stretch;max-width:34ch;padding-bottom:64px}
+  .flank-r{justify-self:end;max-width:34ch;width:100%;padding-bottom:34px}
   .centre{grid-column:2;order:0}
   .hm{justify-content:flex-start}
   .wx{width:100%;justify-content:flex-start}
@@ -437,6 +439,19 @@ body.compact .room{display:none}
 
 /* ------------------------------------------------------------------ crate */
 .crate-btn[hidden]{display:none}
+.rec-btn{
+  position:fixed;left:116px;bottom:13px;z-index:15;
+  width:44px;height:44px;border-radius:12px;display:grid;place-items:center;
+  background:rgba(255,255,255,.04);border:0;cursor:pointer;color:var(--ink-3);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);
+  -webkit-app-region:no-drag;transition:background .15s,color .15s,transform .15s}
+.crate-btn[hidden] + .rec-btn{left:66px}      /* no crate: slide over */
+.rec-btn:hover{background:rgba(255,255,255,.09);color:var(--ink);transform:translateY(-1px)}
+.rec-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.rec-btn svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.6}
+.rec-btn svg .dot{fill:currentColor;stroke:none}
+body.compact .rec-btn{display:none}
+#winClean{display:none!important}             /* the dock button replaces it */
 .crate-btn{
   position:fixed;left:66px;bottom:13px;z-index:15;
   width:44px;height:44px;border-radius:12px;
@@ -550,7 +565,7 @@ body.compact .crate-btn{display:none}
    buttons. The deck grows to fill the screen and still works as normal.
    Esc, R or the Exit button (shown while the mouse moves) brings it back. */
 body.clean .flank,body.clean .track,body.clean .side,body.clean .md-wrap,
-body.clean .gear,body.clean .crate-btn,body.clean .upbar,body.clean .bar,
+body.clean .gear,body.clean .crate-btn,body.clean .rec-btn,body.clean .upbar,body.clean .bar,
 body.clean .connect,body.clean .lyr-stage,body.clean #dragBar,
 body.clean .resizer,body.clean .md-goal{display:none!important}
 body.clean .stack{display:flex!important}
@@ -651,7 +666,7 @@ body.clean .clean-exit:hover{color:var(--ink);border-color:var(--ink-3)}
   top:var(--md-top);
   transform:translateX(-50%);
   z-index:20;
-  width:min(1180px, calc(100vw - 32px));
+  width:min(820px, calc(100vw - 32px));
   display:flex;
   gap:12px;
 }
@@ -674,7 +689,7 @@ body.has-live .wrap{padding-top:calc(var(--md-h, 0px) + var(--md-top) + 18px)}
   -webkit-app-region:no-drag;
   transition:box-shadow .3s, transform .15s;
   overflow:hidden;
-  padding:12px 18px 10px;
+  padding:8px 16px 7px;
 }
 .md:hover{transform:translateY(-1px)}
 .md:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -685,8 +700,8 @@ body.has-live .wrap{padding-top:calc(var(--md-h, 0px) + var(--md-top) + 18px)}
   gap:clamp(10px,1.4vw,24px);
 }
 .md-side{
-  display:flex;align-items:center;gap:12px;
-  font-size:clamp(15px,1.6vw,28px);
+  display:flex;align-items:center;gap:10px;
+  font-size:clamp(14px,1.2vw,20px);
   font-weight:500;
   min-width:0;
 }
@@ -694,16 +709,16 @@ body.has-live .wrap{padding-top:calc(var(--md-h, 0px) + var(--md-top) + 18px)}
 .md-side.home{justify-content:flex-end}
 .md-side.away{justify-content:flex-start}
 .md-side b{font-weight:600}
-.md-crest{width:clamp(26px,2.6vw,42px);aspect-ratio:1;object-fit:contain;flex:none}
+.md-crest{width:clamp(20px,1.8vw,30px);aspect-ratio:1;object-fit:contain;flex:none}
 .md-score{
   font-family:var(--serif);font-weight:500;
-  font-size:clamp(28px,3.4vw,56px);
+  font-size:clamp(24px,2.3vw,38px);
   line-height:1;letter-spacing:-.02em;
   font-variant-numeric:tabular-nums;
   white-space:nowrap;
 }
 .md-meta{
-  margin-top:7px;
+  margin-top:5px;
   text-align:center;
   font-size:clamp(9px,.75vw,12px);
   letter-spacing:.12em;text-transform:uppercase;
@@ -711,7 +726,9 @@ body.has-live .wrap{padding-top:calc(var(--md-h, 0px) + var(--md-top) + 18px)}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .md-meta b{color:#ff6b6f;font-weight:600;margin-right:.6em}
-.md-meta .go{color:var(--accent)}
+/* 'go' is also the big settings button's class - undo everything it brings */
+.md-meta .go{color:var(--accent);background:none;padding:0;margin:0;width:auto;
+  border-radius:0;font:inherit;display:inline}
 
 /* several games at once: short names, smaller type */
 .md-wrap.multi .md{padding:9px 14px 8px}
@@ -809,7 +826,7 @@ body.goal-on .wrap{filter:brightness(.5);transition:filter .3s}
 .pl-row button.play svg{fill:currentColor;stroke:none}
 .pl-row.busy button{opacity:.5;pointer-events:none}
 /* the picker in settings */
-.pl-pick{display:flex;flex-direction:column;gap:2px;max-height:280px;overflow-y:auto;
+.pl-pick{display:flex;flex-direction:column;gap:2px;max-height:152px;overflow-y:auto;
   border:1px solid var(--line);border-radius:10px;padding:6px}
 .pl-pick label{display:grid;grid-template-columns:auto auto 1fr;gap:10px;align-items:center;
   padding:6px 8px;border-radius:6px;cursor:pointer}
@@ -819,6 +836,9 @@ body.goal-on .wrap{filter:brightness(.5);transition:filter .3s}
 .pl-pick .n{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pl-pick .c{font-size:11px;color:var(--ink-3)}
 .pl-pick .empty{font-size:13px;color:var(--ink-3);padding:10px}
+.fb-more{display:block;text-align:left;margin:2px 0 4px;padding:4px 0;border:0;background:none;cursor:pointer;
+  font:inherit;font-size:clamp(10px,1.15vmin,12px);letter-spacing:.06em;color:var(--ink-3)}
+.fb-more:hover{color:var(--ink)}
 .pl-search{font:inherit;font-size:13px;color:var(--ink);background:var(--bg-2);
   border:1px solid var(--line);border-radius:999px;padding:8px 14px;width:100%;
   margin-bottom:8px;outline:none}
@@ -928,6 +948,12 @@ body.compact .gear{display:none}
 .sheet-x{width:36px;height:36px;border:0;border-radius:50%;background:transparent;color:var(--ink-3);font-size:22px;cursor:pointer}
 .sheet-x:hover{background:var(--bg-2);color:var(--ink)}
 .step{margin-top:24px}
+/* Settings side by side: the sheet widens, everything sits in two columns */
+#settings .sheet-box{width:min(980px,100%)}
+.set-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 36px;align-items:start}
+.set-col{min-width:0}
+@media (max-width:760px){ .set-cols{grid-template-columns:1fr} }
+.set-col input:not([type=checkbox]):not([type=color]){max-width:none}
 .step h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px;font-weight:500}
 .hint{font-size:12px;color:var(--ink-3);line-height:1.5;margin-top:8px}
 .swatches{display:flex;flex-wrap:wrap;gap:10px}
@@ -967,6 +993,13 @@ body.compact .gear{display:none}
 .chip:hover{border-color:#ff8a8d;color:#ff8a8d}
 .chip img{width:14px;height:14px;object-fit:contain;border-radius:2px}
 .chip .x{opacity:.5}
+/* a long team list folds to two lines; 'Show all' opens it */
+.chips.folded{max-height:62px;overflow:hidden;
+  -webkit-mask-image:linear-gradient(180deg,#000 55%,transparent);mask-image:linear-gradient(180deg,#000 55%,transparent)}
+.chips-more{display:block;margin:-2px 0 8px;padding:2px 0;border:0;background:none;cursor:pointer;
+  font:inherit;font-size:12px;color:var(--ink-3)}
+.chips-more:hover{color:var(--ink)}
+.chips-more[hidden]{display:none}
 .drop{
   position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:5;
   background:#1d1a17;border-radius:12px;padding:6px;max-height:260px;overflow:auto;
@@ -994,6 +1027,11 @@ body.compact .gear{display:none}
   font-size:12px;padding:4px 7px;border-radius:7px;
 }
 .mod-item button:hover{background:rgba(255,255,255,.08);color:var(--ink)}
+/* tighter rows in settings so the panel list doesn't dwarf everything else */
+#modList{gap:4px}
+#modList .mod-item{padding:3px 6px 3px 10px;border-radius:8px}
+#modList .mod-item button{height:26px;min-width:26px;padding:0 6px;border:0;box-shadow:none;background:transparent}
+#modList .mod-item button:hover{background:rgba(255,255,255,.08)}
 .mod-item input{accent-color:var(--pine-hi);margin:0;flex:none;width:auto}
 .mod-item .side{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
 .sel{
@@ -1546,6 +1584,9 @@ body.compact.has-art .grooves{opacity:.35}
     <path d="M11 20h10" class="slot"/>
   </svg>
 </button>
+<button class="rec-btn" id="recBtn" title="Record only (R)" aria-label="Show only the record">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5.5"/><circle cx="12" cy="12" r="1.6" class="dot"/></svg>
+</button>
 
 <div class="crate" id="crate" hidden role="dialog" aria-modal="true" aria-labelledby="crateTitle">
   <div class="crate-panel">
@@ -1630,6 +1671,8 @@ body.compact.has-art .grooves{opacity:.35}
       <button class="sheet-x" id="settingsClose" aria-label="Close">&times;</button>
     </div>
 
+    <div class="set-cols">
+      <div class="set-col">
     <div class="step">
       <h2>Turntable colour</h2>
       <div class="swatches" id="swatches2"></div>
@@ -1652,23 +1695,12 @@ body.compact.has-art .grooves{opacity:.35}
     </div>
 
     <div class="step">
-      <h2>Location</h2>
-      <div class="row">
-        <div class="picker" id="place2" style="flex:1">
-          <input class="placeq" aria-label="Your city" autocomplete="off">
-          <div class="drop" hidden></div>
-        </div>
-        <button class="ghost" id="locate">Detect</button>
-      </div>
-      <label class="check"><input type="checkbox" id="autoLoc"> Keep it up to date automatically</label>
-    </div>
-
-    <div class="step">
       <h2>Panels</h2>
       <div class="mods" id="modList"></div>
       <p class="hint">Switch a panel off, or send it to the other side. Arrows reorder.</p>
     </div>
-
+      </div>
+      <div class="set-col">
     <div class="step" id="plStep">
       <h2>Playlists</h2>
       <input class="pl-search" id="plSearch" type="search" placeholder="Search your playlists" aria-label="Search your playlists" autocomplete="off" hidden>
@@ -1697,10 +1729,23 @@ body.compact.has-art .grooves{opacity:.35}
       <h2>Teams</h2>
       <div class="picker" id="pick2">
         <div class="chips" id="chips2"></div>
+        <button class="chips-more" id="chipsMore2" type="button" hidden></button>
         <input class="teamq" placeholder="Add a team or league&hellip;" aria-label="Search teams and leagues" autocomplete="off">
         <div class="drop" hidden></div>
       </div>
       <p class="hint">Click a chip to remove it. Empty hides football.</p>
+    </div>
+
+    <div class="step">
+      <h2>Location</h2>
+      <div class="row">
+        <div class="picker" id="place2" style="flex:1">
+          <input class="placeq" aria-label="Your city" autocomplete="off">
+          <div class="drop" hidden></div>
+        </div>
+        <button class="ghost" id="locate">Detect</button>
+      </div>
+      <label class="check"><input type="checkbox" id="autoLoc"> Keep it up to date automatically</label>
     </div>
 
     <div class="step">
@@ -1720,6 +1765,8 @@ body.compact.has-art .grooves{opacity:.35}
       <label class="check"><input type="checkbox" id="qrOn"> Song requests by QR code</label>
       <label class="check"><input type="checkbox" id="lyrOn"> Lyrics button under the record</label>
       <label class="check"><input type="checkbox" id="onTop"> Keep the window above other apps</label>
+    </div>
+      </div>
     </div>
 
     <button class="go" id="settingsSave">Save</button>
@@ -1791,7 +1838,18 @@ function matchWhen(iso){
 }
 
 let footballSig = '';
+const FB_SHOW = 3;
+const fbOpen = {recent: false, next: false};
+let fbLast = null;
+document.addEventListener('click', e => {
+  const b = e.target.closest('.fb-more');
+  if(!b) return;
+  fbOpen[b.dataset.more] = !fbOpen[b.dataset.more];
+  footballSig = '';
+  renderFootball(fbLast);
+});
 function renderFootball(f){
+  fbLast = f;
   const empty = !f || (!(f.live || []).length && !(f.recent || []).length && !(f.upcoming || []).length);
   $('fb').hidden = empty;
   if(empty){ footballSig = 'none'; return; }
@@ -1833,21 +1891,27 @@ function renderFootball(f){
       out.push(row(m, score, sub, 'is-live'));
     });
   }
+  // Three either side of today; the rest stay one click away.
+  const more = (key, list) => list.length > FB_SHOW
+    ? '<button class="fb-more" data-more="' + key + '">'
+      + (fbOpen[key] ? 'Show less' : 'Show all ' + list.length) + '</button>' : '';
   if(recent.length){
     out.push('<div class="fb-head">Results</div>');
-    recent.forEach(m => {
+    (fbOpen.recent ? recent : recent.slice(0, FB_SHOW)).forEach(m => {
       const score = m.home_score + '\u2013' + m.away_score;
       const sub = esc(m.comp) + ' · ' + esc(matchWhen(m.when))
         + (m.link ? ' · <span class="mt-go">\u25B6 ' + esc(m.link_label) + '</span>' : '');
       out.push(row(m, score, sub));
     });
+    out.push(more('recent', recent));
   }
   if(next.length){
     out.push('<div class="fb-head">Up next</div>');
-    next.forEach(m => {
+    (fbOpen.next ? next : next.slice(0, FB_SHOW)).forEach(m => {
       out.push(row(Object.assign({}, m, {link:'', alt:''}),
                    esc(matchWhen(m.when)), esc(m.comp), 'future'));
     });
+    out.push(more('next', next));
   }
   el.innerHTML = out.join('');
 }
@@ -2164,6 +2228,7 @@ $('setupDone').addEventListener('click', async () => {
 });
 
 // settings panel
+$('chipsMore2').addEventListener('click', () => { chipsOpen = !chipsOpen; foldChips(); });
 $('gearBtn').addEventListener('click', () => { fillSettings(); $('settings').hidden = false; loadPlaylistPicker(); });
 // Repainting mid-edit is what made the city box refill itself.
 $('settingsClose').addEventListener('click', () => {
@@ -2826,11 +2891,22 @@ function drawChips(which){
     '<button class="chip" data-i="' + i + '" title="Remove">'
     + (t.badge ? '<img src="' + esc(t.badge) + '" alt="">' : '')
     + esc(t.name) + '<span class="x">&times;</span></button>').join('');
+  if(which === 'pick2') foldChips();
+}
+let chipsOpen = false;
+function foldChips(){
+  const box = $('chips2'), btn = $('chipsMore2');
+  if(!box || !btn) return;
+  const n = PICKS.pick2.length, long = n > 8;
+  box.classList.toggle('folded', long && !chipsOpen);
+  btn.hidden = !long;
+  btn.textContent = chipsOpen ? 'Show less' : 'Show all ' + n;
 }
 
 function addPick(which, item){
   if(PICKS[which].some(t => t.name.toLowerCase() === item.name.toLowerCase())) return;
   PICKS[which].push(item);
+  if(which === 'pick2') chipsOpen = true;     // show the one just added
   drawChips(which);
 }
 
@@ -3663,6 +3739,7 @@ function setClean(on){
 }
 $('winClean').addEventListener('click', () => setClean(!clean));
 $('cleanExit').addEventListener('click', () => setClean(false));
+$('recBtn').addEventListener('click', () => setClean(true));
 
 document.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
