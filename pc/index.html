@@ -545,6 +545,29 @@ body.compact .crate-btn{display:none}
 .crate-pick .acts button:hover,.crate-pick .acts span:hover{color:var(--ink);border-color:var(--ink-3)}
 @media (prefers-reduced-motion:reduce){.crate,.crate-pick{animation:none}}
 
+/* ------------------------------------------------------- record only
+   Everything but the turntable steps out: panels, title, controls, banner,
+   buttons. The deck grows to fill the screen. Esc, R or a double-click
+   brings it all back. */
+body.clean .flank,body.clean .track,body.clean .side,body.clean .md-wrap,
+body.clean .gear,body.clean .crate-btn,body.clean .upbar,body.clean .bar,
+body.clean .connect,body.clean .lyr-stage,body.clean #dragBar,
+body.clean .resizer,body.clean .md-goal{display:none!important}
+body.clean .stack{display:flex!important}
+body.clean .wrap{display:grid!important;place-items:center;
+  grid-template-columns:1fr!important;padding:0!important;min-height:100vh}
+body.clean .centre{gap:0;grid-column:1/-1!important;justify-self:center}
+body.clean .deck,body.clean.widget .deck{
+  /* the plinth reaches 1.22x past the record on each axis - leave a margin */
+  --dw:min(calc(88vh / 1.22), calc(88vw / 1.22))!important;
+  width:var(--dw)!important;margin:calc(var(--dw) * .11)!important}
+body.clean{cursor:none}
+body.clean.show-bar{cursor:auto}
+.clean-hint{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:60;
+  font-size:12px;letter-spacing:.08em;color:var(--ink-3);background:rgba(0,0,0,.35);
+  padding:6px 12px;border-radius:999px;opacity:0;transition:opacity .6s;pointer-events:none}
+body.clean .clean-hint.on{opacity:1}
+
 /* ---------------------------------------------------------------- clock */
 .clock{line-height:1}
 .hm{
@@ -1255,8 +1278,11 @@ body.widget .drag:hover{opacity:1}
 
 .resizer{display:none}
 /* macOS keeps its own traffic lights and fullscreen, so ours get out of the way */
-body.mac #dragBar button,body.mac .resizer{display:none}
+body.mac #dragBar button:not(#winClean),body.mac .resizer,
+body.native #dragBar button:not(#winClean),body.native .resizer{display:none!important}
 body.mac #dragBar{height:34px}
+/* A real Windows frame: no in-page drag strip needed, only the clean button */
+body.native #dragBar{height:30px;background:none}
 body.widget .resizer{
   display:block;
   position:fixed;right:0;bottom:0;
@@ -1369,11 +1395,13 @@ body.compact.has-art .grooves{opacity:.35}
 
 <div class="drag pywebview-drag-region" id="dragBar">
   <div class="grip pywebview-drag-region"></div>
+  <button id="winClean" title="Record only (R)" aria-label="Show only the record">&#9673;</button>
   <button id="winFull" title="Fullscreen">&#9974;</button>
   <button id="winMin" title="Shrink">&#8211;</button>
   <button id="winClose" title="Close">&times;</button>
 </div>
 <div class="resizer" id="resizer" title="Drag to resize"></div>
+<div class="clean-hint" id="cleanHint">Esc or R to bring everything back</div>
 
 <div class="wrap">
 
@@ -3479,6 +3507,9 @@ $('guestConnectBtn').addEventListener('click', () => $('connectBtn').click());
 
 // Clicking the record opens the music app and starts it playing.
 async function deckClick(){
+  // In the record-only view a double-click means "come back", and its two
+  // clicks mustn't switch the turntable's plug off and on again.
+  if(typeof clean !== 'undefined' && clean) return;
   if(compact){ setCompact(false); return; }
   if(deckPlug){
     const on = !deckPlug.on;
@@ -3506,6 +3537,10 @@ $('deck').addEventListener('keydown', e => {
 /* ---------------- widget chrome ---------------- */
 if(new URLSearchParams(location.search).get('widget') === '1'){
   document.body.classList.add('widget');
+}
+// A build with a real Windows frame says so, and our own buttons step aside.
+if(new URLSearchParams(location.search).get('framed') === '1'){
+  document.body.classList.add('native');
 }
 if(/Mac/i.test(navigator.platform || navigator.userAgent)){
   document.body.classList.add('mac');      // native window buttons do the job
@@ -3571,12 +3606,39 @@ document.addEventListener('fullscreenchange', () => {
   });
 })();
 
+/* Record only: fullscreen, nothing but the turntable. Leaving puts the
+   window back exactly as it was, fullscreen or not. */
+let clean = false, cleanWasFull = false, cleanHintTimer;
+function setClean(on){
+  if(on === clean) return;
+  clean = on;
+  if(on){
+    cleanWasFull = isFull;
+    if(compact) setCompact(false);
+    if(typeof lyrOpen !== 'undefined' && lyrOpen) showLyrics(false);
+    document.body.classList.add('clean');
+    if(!isFull) setFullscreen(true);
+    $('cleanHint').classList.add('on');
+    clearTimeout(cleanHintTimer);
+    cleanHintTimer = setTimeout(() => $('cleanHint').classList.remove('on'), 2500);
+  }else{
+    document.body.classList.remove('clean');
+    $('cleanHint').classList.remove('on');
+    if(isFull && !cleanWasFull) setFullscreen(false);
+  }
+}
+$('winClean').addEventListener('click', () => setClean(!clean));
+document.addEventListener('dblclick', e => { if(clean){ e.preventDefault(); setClean(false); } });
+
 document.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   const typing = document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName);
-  if(k === 'f' && !typing) toggleFullscreen();
+  if(typing) return;
+  if(k === 'r' && !e.ctrlKey && !e.metaKey && !e.altKey){ setClean(!clean); return; }
+  if(k === 'f' && !clean) toggleFullscreen();
   if(e.key === 'Escape'){
-    if(isFull) setFullscreen(false);
+    if(clean) setClean(false);
+    else if(isFull) setFullscreen(false);
     else if(compact) setCompact(false);
   }
 });
