@@ -93,7 +93,7 @@ DEFAULTS = {
                  "max_upcoming": 5, "refresh_minutes": 30,
                  "request_gap_seconds": 2.5, "live_refresh_seconds": 30},
     "guest_queue": {"enabled": True, "cooldown_seconds": 20},
-    "player_poll_seconds": 2,
+    "player_poll_seconds": 1,      # local reads are cheap; a new song shows within a second
     "port": 8765,
     # Public PKCE client id: safe to ship, it can't be used without the
     # person signing in themselves.
@@ -1589,10 +1589,20 @@ def _win_now_playing(service):
         artist = (p.artist or "").strip()
         album = (getattr(p, "album_title", "") or "").strip()
         pos = dur = 0
+        pos_age = 0.0
         try:
             tl = s.get_timeline_properties()
             pos = int(tl.position.total_seconds() * 1000)
             dur = int(tl.end_time.total_seconds() * 1000)
+            # The position is as of the app's last report, which can be
+            # seconds old - that's what left the lyrics trailing the song.
+            try:
+                lu = tl.last_updated_time
+                if lu.tzinfo is None:
+                    lu = lu.replace(tzinfo=timezone.utc)
+                pos_age = (datetime.now(timezone.utc) - lu).total_seconds()
+            except Exception:
+                pos_age = 0.0
         except Exception:
             pass
         playing = True
@@ -1600,6 +1610,10 @@ def _win_now_playing(service):
             playing = int(s.get_playback_info().playback_status) == 4   # PLAYING
         except Exception:
             pass
+        if playing and pos and 0 < pos_age < 600:
+            pos += int(pos_age * 1000)
+            if dur:
+                pos = min(pos, dur)
         return {"title": title, "artist": artist, "album": album,
                 "art": art_soon(artist, title, album),
                 "ts": time.time(), "source": service,
@@ -1843,14 +1857,16 @@ def _borrow_position(track):
     playing = bool(track.get("is_playing", True))
     if (key != _WEB_POS["key"] or now - _WEB_POS["at"] > 10
             or playing != _WEB_POS["playing"]):        # pause/resume: re-read now
+        t0 = time.time()
         try:
             api = spotify_now_playing()
         except Exception as e:
             api = None
             log("spotify web (position):", e)
+        mid = (t0 + time.time()) / 2      # the reading is from somewhere mid-request
         if api and (api.get("title") or "").strip().lower() == key and api.get("duration_ms"):
             _WEB_POS.update(key=key, ms=int(api.get("progress_ms") or 0),
-                            dur=int(api["duration_ms"]), at=now, playing=playing)
+                            dur=int(api["duration_ms"]), at=mid, playing=playing)
         elif key != _WEB_POS["key"]:
             _WEB_POS.update(key=None)
             return
@@ -1868,7 +1884,7 @@ def player_loop():
     load_last_track()
     if (CFG.get("guest_queue") or {}).get("enabled"):
         log(f"guest: QR points at {guest_url()}")
-    poll = cfg("player_poll_seconds", 2)
+    poll = min(float(cfg("player_poll_seconds", 1)), 1.0)   # an old saved "2" mustn't slow it back down
     was_playing = False
     last_queue = 0
 
@@ -1918,6 +1934,9 @@ def player_loop():
                     remember_track(playing)
                     log("playing:", playing["artist"], "-", playing["title"],
                         f"[{service}]")
+                # When this position was true. Readings here are instant, so
+                # now; the mic and the web API set their own, earlier, times.
+                playing.setdefault("progress_at", time.time())
                 req_by = GUEST_REQUESTS.get(playing.get("uri"))
                 if req_by:
                     playing["requested_by"] = req_by["name"]
@@ -1946,9 +1965,9 @@ def player_loop():
             np_ = get_state().get("now_playing")
             if np_ and np_.get("duration_ms") and np_.get("is_playing"):
                 left = (np_["duration_ms"] - (np_.get("progress_ms") or 0)) / 1000.0 \
-                    - (time.time() - (np_.get("ts") or time.time()))
+                    - (time.time() - (np_.get("progress_at") or time.time()))
                 if left < 4:
-                    nap_for = 0.35
+                    nap_for = 0.25
         except Exception:
             pass
         if WAKE_SPOTIFY.wait(nap_for):

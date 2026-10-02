@@ -561,20 +561,20 @@ body.compact .crate-btn{display:none}
 @media (prefers-reduced-motion:reduce){.crate,.crate-pick{animation:none}}
 
 /* ------------------------------------------------------- record only
-   Everything but the turntable steps out: panels, title, controls, banner,
-   buttons. The deck grows to fill the screen and still works as normal.
+   The panels, banner and corner buttons step out; the turntable and what's
+   under it - title, artist, credits, lyrics, controls - stay. The deck
+   grows into the room that's left. Lyrics swap in for the deck as usual.
    Esc, R or the Exit button (shown while the mouse moves) brings it back. */
-body.clean .flank,body.clean .track,body.clean .side,body.clean .md-wrap,
+body.clean .flank,body.clean .side,body.clean .md-wrap,
 body.clean .gear,body.clean .crate-btn,body.clean .rec-btn,body.clean .upbar,body.clean .bar,
-body.clean .connect,body.clean .lyr-stage,body.clean #dragBar,
+body.clean .connect,body.clean #dragBar,
 body.clean .resizer,body.clean .md-goal{display:none!important}
-body.clean .stack{display:flex!important}
 body.clean .wrap{display:grid!important;place-items:center;
-  grid-template-columns:1fr!important;padding:0!important;min-height:100vh}
-body.clean .centre{gap:0;grid-column:1/-1!important;justify-self:center}
+  grid-template-columns:1fr!important;padding:2vh 0!important;min-height:100vh}
+body.clean .centre{grid-column:1/-1!important;justify-self:center}
 body.clean .deck,body.clean.widget .deck{
-  /* the plinth reaches 1.22x past the record on each axis - leave a margin */
-  --dw:min(calc(88vh / 1.22), calc(88vw / 1.22))!important;
+  /* height left after the title block (~230px), over the plinth's 1.22x reach */
+  --dw:min(calc((100vh - 230px) / 1.22), calc(88vw / 1.22))!important;
   width:var(--dw)!important;margin:calc(var(--dw) * .11)!important}
 body.clean{cursor:none}
 body.clean.show-bar{cursor:auto}
@@ -907,7 +907,7 @@ body.lyrics-on .stack{display:none}
   padding:clamp(4px,.7vmin,9px) 0;
   color:var(--ink-2);opacity:.38;
   transform-origin:center;
-  transition:color .35s, opacity .35s, transform .35s;
+  transition:color .15s, opacity .15s, transform .2s;
 }
 /* the lines either side of the current one, so the eye can find its place */
 .lyr-scroll .ln.near{opacity:.62}
@@ -2682,8 +2682,10 @@ function lyrElapsed(){
 function lyrIndex(){
   const lines = LYR && LYR.lines;
   if(!lines || !lines.length) return -1;
-  const t = lyrElapsed();
-  if(t === null) return -1;
+  const t0 = lyrElapsed();
+  if(t0 === null) return -1;
+  const t = t0 + 150;    // light the line as it starts, not after it has
+
   let lo = 0, hi = lines.length - 1, at = -1;
   while(lo <= hi){
     const mid = (lo + hi) >> 1;
@@ -2727,7 +2729,7 @@ function paintLyrics(){
                   behavior: 'smooth'});
   }
 }
-setInterval(paintLyrics, 250);
+setInterval(paintLyrics, 100);
 
 /* Size the words to the room actually left above the title and controls.
    A fixed vh share overflowed short windows (a 1080p screen at 150% gives
@@ -3245,8 +3247,10 @@ function setProgress(np){
     document.body.classList.remove('has-progress');
     return;
   }
-  // Vinyl matches carry the moment the position was measured; Spotify's is fresh each poll.
-  const age = np.progress_at ? Math.max(0, Date.now() - np.progress_at * 1000) : 0;
+  // Every reading carries the moment it was true. Count on from then, not
+  // from when it reached the page - that gap is what left the lyrics behind.
+  const age = np.progress_at && np.is_playing !== false
+    ? Math.max(0, Math.min(10000, Date.now() - np.progress_at * 1000)) : 0;
   prog = {at: Date.now(), ms: (np.progress_ms || 0) + age, total: np.duration_ms};
   document.body.classList.add('has-progress');
 }
@@ -3294,7 +3298,7 @@ async function poll(){
   clearTimeout(pollTimer);
   if(pollCtl) pollCtl.abort();
   const ctl = pollCtl = new AbortController();
-  let wait = 3000;
+  let wait = 1000;      // a new song within a second; it's a local request, cheap
   try{
     const demo = new URLSearchParams(location.search).get('demo') === '1';
     const r = await fetch('/api/state' + (demo ? '?demo=1' : ''),
@@ -3726,14 +3730,15 @@ function setClean(on){
   if(on){
     cleanWasFull = isFull;
     if(compact) setCompact(false);
-    if(typeof lyrOpen !== 'undefined' && lyrOpen) showLyrics(false);
     document.body.classList.add('clean');
+    if(typeof fitLyrics === 'function') requestAnimationFrame(fitLyrics);
     if(!isFull) setFullscreen(true);
     $('cleanHint').classList.add('on');
     clearTimeout(cleanHintTimer);
     cleanHintTimer = setTimeout(() => $('cleanHint').classList.remove('on'), 2500);
   }else{
     document.body.classList.remove('clean');
+    if(typeof fitLyrics === 'function') requestAnimationFrame(fitLyrics);
     $('cleanHint').classList.remove('on');
     if(isFull && !cleanWasFull) setFullscreen(false);
   }
