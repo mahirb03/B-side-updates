@@ -1147,6 +1147,59 @@ body.compact .ctl{display:none}
   background:rgba(95,154,124,.12);box-shadow:inset 0 0 0 1px rgba(95,154,124,.25);
 }
 .guest-copy{min-width:0;flex:1}
+.guest-addr{flex:0 0 100%;text-align:center;margin-top:-4px;
+  font-size:clamp(10px,1.2vmin,12px);color:var(--ink-3);letter-spacing:.02em}
+.guest-addr b{font-weight:500;color:var(--ink-2);user-select:all;-webkit-user-select:all}
+
+/* settings: help for when phones can't open the QR */
+.qr-help{margin:6px 0 0 27px;font-size:12px;color:var(--ink-3)}
+.qr-help summary{cursor:pointer;color:var(--ink-2);list-style:none}
+.qr-help summary::-webkit-details-marker{display:none}
+.qr-help summary::before{content:'\203A';display:inline-block;width:12px;transition:transform .15s}
+.qr-help[open] summary::before{transform:rotate(90deg)}
+.qr-help .qr-row{display:flex;gap:8px;align-items:center;margin:8px 0 4px;flex-wrap:wrap}
+.qr-help select{font:inherit;font-size:12px;color:var(--ink);background:var(--bg-2);
+  border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+.qr-help .qr-state{font-size:12px}
+.qr-help .qr-state.ok{color:var(--pine-hi)}
+.qr-help .qr-state.bad{color:var(--accent)}
+.qr-help ul{margin:6px 0 0 16px;line-height:1.55}
+.qr-help li{margin:2px 0}
+
+/* ---------- first-run walkthrough ---------- */
+.tour{position:fixed;inset:0;z-index:400;-webkit-app-region:no-drag}
+.tour[hidden]{display:none}
+.tour-hole{position:fixed;border-radius:16px;pointer-events:none;
+  box-shadow:0 0 0 9999px rgba(8,7,6,.78), 0 0 0 2px rgba(240,168,74,.55);
+  transition:left .3s ease, top .3s ease, width .3s ease, height .3s ease, border-radius .3s}
+.tour-hole.none{left:50%!important;top:50%!important;width:0!important;height:0!important;
+  box-shadow:0 0 0 9999px rgba(8,7,6,.82)}
+.tour-card{position:fixed;width:min(340px,calc(100vw - 32px));
+  background:var(--bg-2);border:1px solid var(--line);border-radius:14px;
+  padding:18px 18px 14px;box-shadow:0 18px 50px rgba(0,0,0,.55);
+  transition:left .3s ease, top .3s ease, opacity .2s}
+.tour-card.wide{width:min(460px,calc(100vw - 32px))}
+.tour-step{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.tour-card h3{font:500 21px/1.2 var(--serif);color:var(--ink);margin:6px 0 8px}
+.tour-card p{font-size:13.5px;line-height:1.55;color:var(--ink-2)}
+.tour-card p + p{margin-top:8px}
+.tour-card kbd,.keys kbd{display:inline-block;min-width:24px;padding:2px 7px;text-align:center;
+  font:500 12px/1.5 var(--sans);color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-bottom-width:2px;border-radius:6px}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:center;margin-top:4px;
+  font-size:13.5px;color:var(--ink-2)}
+.keys .k{display:flex;gap:4px;justify-content:flex-end}
+.tour-nav{display:flex;align-items:center;gap:8px;margin-top:16px}
+.tour-nav .sp{flex:1}
+.tour-dots{display:flex;gap:5px}
+.tour-dots i{width:6px;height:6px;border-radius:50%;background:var(--line)}
+.tour-dots i.on{background:var(--accent)}
+.tour-btn{font:500 13px/1 var(--sans);border-radius:999px;padding:9px 15px;cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--ink-2)}
+.tour-btn:hover{color:var(--ink);background:rgba(255,255,255,.05)}
+.tour-btn.primary{background:var(--accent);border-color:var(--accent);color:#1b1408}
+.tour-btn.primary:hover{filter:brightness(1.08);background:var(--accent)}
+.tour-btn.link{border:0;padding:9px 6px;color:var(--ink-3)}
 .guest-title{
   font-size:clamp(9px,1.1vmin,11px);
   letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);
@@ -1511,6 +1564,7 @@ body.compact.has-art .grooves{opacity:.35}
         <ol class="q" id="q"><li class="q-empty">Queue's empty. Scan to add a song.</li></ol>
       </div>
       <div class="guest-scan">Scan to add songs</div>
+      <div class="guest-addr" id="guestAddr" hidden>or open <b id="guestAddrTxt"></b></div>
     </div>
     </div>
 
@@ -1666,6 +1720,22 @@ body.compact.has-art .grooves{opacity:.35}
   <button class="no" id="upLater" aria-label="Not now">&times;</button>
 </div>
 
+<div class="tour" id="tour" hidden role="dialog" aria-modal="true" aria-labelledby="tourTitle">
+  <div class="tour-hole" id="tourHole"></div>
+  <div class="tour-card" id="tourCard">
+    <div class="tour-step" id="tourStep"></div>
+    <h3 id="tourTitle"></h3>
+    <div id="tourBody"></div>
+    <div class="tour-nav">
+      <div class="tour-dots" id="tourDots"></div>
+      <span class="sp"></span>
+      <button class="tour-btn link" id="tourSkip" type="button">Skip</button>
+      <button class="tour-btn" id="tourBack" type="button">Back</button>
+      <button class="tour-btn primary" id="tourNext" type="button">Next</button>
+    </div>
+  </div>
+</div>
+
 <div class="sheet" id="settings" hidden>
   <div class="sheet-box">
     <div class="sheet-head">
@@ -1765,8 +1835,23 @@ body.compact.has-art .grooves{opacity:.35}
     <div class="step">
       <h2>Bits and pieces</h2>
       <label class="check"><input type="checkbox" id="qrOn"> Song requests by QR code</label>
+      <details class="qr-help" id="qrHelp">
+        <summary>Phones can't open it?</summary>
+        <div class="qr-row">
+          <span>The QR points at</span>
+          <select id="qrHost" aria-label="Address the QR code points at"></select>
+          <span class="qr-state" id="qrState"></span>
+        </div>
+        <ul id="qrTips">
+          <li>The phone has to be on the same WiFi as this computer - not a guest network, and not on mobile data.</li>
+          <li id="qrTipFw"></li>
+          <li>Uni, office and hotel WiFi usually stop devices reaching each other. Nothing on this end gets round that - use Spotify's own Jam there instead.</li>
+          <li>If there's more than one address above, try the other one.</li>
+        </ul>
+      </details>
       <label class="check"><input type="checkbox" id="lyrOn"> Lyrics button under the record</label>
       <label class="check"><input type="checkbox" id="onTop"> Keep the window above other apps</label>
+      <button class="ghost" id="tourAgain" type="button" style="margin-top:12px">Show me around again</button>
     </div>
       </div>
     </div>
@@ -3343,7 +3428,14 @@ async function poll(){
     // grant it only makes sense there.
     $('guestConnect').hidden = !(s.guest_url && !s.guest_ready && s.spotify_needs_login
       && (s.settings || {}).service === 'spotify');
-    if(showQr && !$('qr').getAttribute('src')) $('qr').src = '/api/qr.svg';
+    // Redraw the code when the address changes (new WiFi, or picked in settings).
+    if(showQr && $('qr').dataset.url !== s.guest_url){
+      $('qr').dataset.url = s.guest_url;
+      $('qr').src = '/api/qr.svg?u=' + encodeURIComponent(s.guest_url);
+    }
+    $('guestAddr').hidden = !showQr;
+    if(showQr) $('guestAddrTxt').textContent = s.guest_url.replace(/^https?:\/\//, '');
+    maybeTour(s);
   }catch(e){
     if(e && e.name === 'AbortError') return;   // a newer poll took over
     $('statusText').textContent = 'server down';
@@ -3802,6 +3894,200 @@ document.addEventListener('keydown', e => {
     else if(isFull) setFullscreen(false);
     else if(compact) setCompact(false);
   }
+});
+
+
+/* ---------------- first-run walkthrough ---------------- */
+// Shown once, after setup, to anyone who hasn't seen it. Each step lights up
+// the real thing on screen; steps for things that aren't showing are skipped.
+const MAC = /Mac/.test(navigator.platform || navigator.userAgent);
+function shortcutsHTML(){
+  const rows = [
+    [['Space'], 'Play / pause'],
+    [['←', '→'], 'Previous / next song'],
+    [['L'], 'Lyrics, when the song has them'],
+    [['R'], 'Record only - everything else steps away'],
+    [['F'], 'Fullscreen'],
+  ];
+  if(!$('crateBtn').hidden) rows.push([['C'], 'Your record crate']);
+  rows.push([['Esc'], 'Back out of whatever is open']);
+  rows.push([['?'], 'This list, any time']);
+  return '<div class="keys">' + rows.map(([ks, what]) =>
+    '<span class="k">' + ks.map(k => '<kbd>' + k + '</kbd>').join('') + '</span><span>' + what + '</span>'
+  ).join('') + '</div>';
+}
+function tourSteps(){
+  const plug = $('pwr') && !$('pwr').hidden;
+  return [
+    {title:'Welcome to B-Side', wide:true,
+     body:'<p>Whatever you\'re playing, on a turntable - with the clock, weather and the rest around it.</p><p>Quick look round? Takes half a minute.</p>',
+     next:'Show me'},
+    {sel:'#deck', title:'The record',
+     body:'<p>Your music spins here, with the cover on the label. Click it to play or pause' +
+          (plug ? ' - or, with nothing on, to switch the turntable on.' : ', or to open your music app when nothing\'s on.') + '</p>'},
+    {sel:'.track', title:'What\'s playing', pad:10,
+     body:'<p>Song, artist and who made it. <b>Lyrics</b> swaps the record for words that follow along, when the song has them.</p>'},
+    {sel:'#ctl', title:'Controls', pad:8,
+     body:'<p>Play, volume and which device Spotify plays on.</p>'},
+    {sel:'#flankL', title:'Panels', pad:10,
+     body:'<p>Clock, weather, playlists, song requests - and football, history and more on the other side. Pick which show, and on which side, in Settings.</p>'},
+    {sel:'#guest', title:'Song requests', pad:10,
+     body:'<p>Friends on the same WiFi scan this to add songs to your queue. If a phone can\'t open it, Settings has a fix under <b>Phones can\'t open it?</b></p>'},
+    {sel:'#recBtn', title:'Record only', pad:8,
+     body:'<p>Everything but the record and the song steps away - nice when it\'s just on in the background. Press <kbd>R</kbd> or this; move the mouse for the way back.</p>'},
+    {sel:'#crateBtn', title:'Your crate', pad:8,
+     body:'<p>Your record collection, from Discogs. Press <kbd>C</kbd> to flick through it.</p>'},
+    {sel:'#gearBtn', title:'Settings', pad:8,
+     body:'<p>Colour, music app, panels, playlists, teams and location. You can take this tour again from there.</p>'},
+    {title:'Shortcuts', wide:true, keys:true,
+     body:'', next:'Done'},
+  ];
+}
+let TOUR = null;   // {steps, i}
+function visible(el){
+  if(!el) return false;
+  if(el.closest('[hidden]')) return false;
+  const r = el.getBoundingClientRect();
+  return r.width > 4 && r.height > 4;    // on the page; it's scrolled to when its turn comes
+}
+function startTour(onlyKeys){
+  if(document.body.classList.contains('clean')) setClean(false);
+  if(typeof lyrOpen !== 'undefined' && lyrOpen) showLyrics(false);
+  $('settings').hidden = true;
+  const all = tourSteps();
+  const steps = onlyKeys ? all.slice(-1)
+    : all.filter(st => !st.sel || visible(document.querySelector(st.sel)));
+  TOUR = {steps, i:0, onlyKeys:!!onlyKeys};
+  $('tour').hidden = false;
+  drawTour();
+  $('tourNext').focus();
+}
+function endTour(){
+  if(!TOUR) return;
+  const wasFull = !TOUR.onlyKeys;
+  TOUR = null;
+  $('tour').hidden = true;
+  scrollTo({top:0, behavior:'smooth'});
+  if(wasFull && !(SET && SET.tour_done)){
+    if(SET) SET.tour_done = true;
+    fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({settings:{tour_done:true}})}).catch(() => {});
+  }
+}
+function drawTour(){
+  if(!TOUR) return;
+  const {steps, i} = TOUR, st = steps[i];
+  const card = $('tourCard'), hole = $('tourHole');
+  const el = st.sel ? document.querySelector(st.sel) : null;
+  $('tourTitle').textContent = st.title;
+  $('tourBody').innerHTML = st.keys ? shortcutsHTML() : st.body;
+  $('tourStep').textContent = TOUR.onlyKeys ? '' : (i === 0 ? 'Welcome' : i + ' of ' + (steps.length - 1));
+  $('tourDots').innerHTML = TOUR.onlyKeys ? '' : steps.map((_, k) => '<i' + (k === i ? ' class="on"' : '') + '></i>').join('');
+  $('tourBack').hidden = i === 0 || TOUR.onlyKeys;
+  $('tourSkip').hidden = i === steps.length - 1;
+  $('tourNext').textContent = st.next || (i === steps.length - 1 ? 'Done' : 'Next');
+  card.classList.toggle('wide', !!st.wide);
+
+  const M = 16;
+  if(el && visible(el)){
+    // In a small window the panels sit below the record - bring this one up.
+    const r0 = el.getBoundingClientRect();
+    if(r0.top < 8 || r0.bottom > innerHeight - 8){
+      el.scrollIntoView({block: r0.height > innerHeight * 0.6 ? 'start' : 'center', behavior:'instant'});
+    }
+    const r = el.getBoundingClientRect(), pad = st.pad != null ? st.pad : 14;
+    const box = {l:Math.max(6, r.left - pad), t:Math.max(6, r.top - pad)};
+    box.w = Math.min(innerWidth - 6, r.right + pad) - box.l;
+    box.h = Math.min(innerHeight - 6, r.bottom + pad) - box.t;
+    hole.classList.remove('none');
+    Object.assign(hole.style, {left:box.l + 'px', top:box.t + 'px', width:box.w + 'px', height:box.h + 'px',
+      borderRadius:(el.id === 'deck' ? '28px' : '14px')});
+    // The card goes wherever there's most room: below, above, right, left.
+    const cw = card.offsetWidth, ch = card.offsetHeight;
+    const room = {below:innerHeight - (box.t + box.h), above:box.t,
+                  right:innerWidth - (box.l + box.w), left:box.l};
+    let x, y;
+    if(room.below >= ch + M * 2){ y = box.t + box.h + M; x = box.l + box.w / 2 - cw / 2; }
+    else if(room.above >= ch + M * 2){ y = box.t - ch - M; x = box.l + box.w / 2 - cw / 2; }
+    else if(room.right >= cw + M * 2){ x = box.l + box.w + M; y = box.t + box.h / 2 - ch / 2; }
+    else if(room.left >= cw + M * 2){ x = box.l - cw - M; y = box.t + box.h / 2 - ch / 2; }
+    else { x = innerWidth / 2 - cw / 2; y = innerHeight - ch - M; }
+    card.style.left = Math.max(M, Math.min(innerWidth - cw - M, x)) + 'px';
+    card.style.top = Math.max(M, Math.min(innerHeight - ch - M, y)) + 'px';
+  }else{
+    hole.classList.add('none');
+    card.style.left = Math.max(M, innerWidth / 2 - card.offsetWidth / 2) + 'px';
+    card.style.top = Math.max(M, innerHeight / 2 - card.offsetHeight / 2) + 'px';
+  }
+}
+function tourMove(d){
+  if(!TOUR) return;
+  const n = TOUR.i + d;
+  if(n >= TOUR.steps.length){ endTour(); return; }
+  TOUR.i = Math.max(0, n);
+  drawTour();
+}
+$('tourNext').addEventListener('click', () => tourMove(1));
+$('tourBack').addEventListener('click', () => tourMove(-1));
+$('tourSkip').addEventListener('click', endTour);
+$('tour').addEventListener('click', e => { if(e.target === $('tour')) tourMove(1); });
+addEventListener('resize', () => { if(TOUR) drawTour(); });
+// While the tour is up it owns the keyboard: nothing behind it reacts.
+addEventListener('keydown', e => {      // window, capture: ahead of every other key handler
+  if(!TOUR) return;
+  e.stopImmediatePropagation();
+  if(e.key === 'Escape'){ e.preventDefault(); endTour(); }
+  else if(e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' '){ e.preventDefault(); tourMove(1); }
+  else if(e.key === 'ArrowLeft'){ e.preventDefault(); tourMove(-1); }
+}, true);
+$('tourAgain').addEventListener('click', () => startTour(false));
+
+let tourChecked = false;
+function maybeTour(s){
+  if(tourChecked || TOUR) return;
+  const set = s.settings || {};
+  if(!set.setup_done || set.tour_done) return;
+  if(!$('setup').hidden || !$('settings').hidden || document.body.classList.contains('compact')) return;
+  tourChecked = true;
+  setTimeout(() => startTour(false), 900);    // let the panels settle first
+}
+
+// More keys: L for lyrics, ? for the shortcut list.
+document.addEventListener('keydown', e => {
+  if(TOUR || e.ctrlKey || e.metaKey || e.altKey) return;
+  const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if(typing) return;
+  if(!$('settings').hidden || !$('setup').hidden || ($('crate') && !$('crate').hidden)) return;
+  if(e.key === '?' ){ e.preventDefault(); startTour(true); return; }
+  if(e.key.toLowerCase() === 'l' && !$('lyrToggle').hidden){ e.preventDefault(); showLyrics(!lyrOpen); }
+});
+
+/* ---------------- settings: when phones can't open the QR ---------------- */
+async function loadQrHelp(){
+  let j;
+  try{ j = await (await fetch('/api/guest/net', {cache:'no-store'})).json(); }catch(e){ return; }
+  const sel = $('qrHost');
+  const opts = ['<option value="">Automatic (' + j.auto + ')</option>']
+    .concat(j.ips.filter(ip => ip !== j.auto || j.pinned).map(ip =>
+      '<option value="' + ip + '"' + (ip === j.pinned ? ' selected' : '') + '>' + ip + '</option>'));
+  sel.innerHTML = opts.join('');
+  if(!j.pinned) sel.value = '';
+  const st = $('qrState');
+  if(!j.enabled){ st.className = 'qr-state'; st.textContent = 'Switch song requests on first.'; }
+  else if(j.answers){ st.className = 'qr-state ok'; st.textContent = 'This computer answers there.'; }
+  else { st.className = 'qr-state bad'; st.textContent = 'Not answering there - restart B-Side.'; }
+  $('qrTipFw').textContent = j.platform === 'darwin'
+    ? 'If your Mac\'s firewall is on: System Settings → Network → Firewall → Options, and set B-Side to "Allow incoming connections".'
+    : j.platform === 'win32'
+    ? 'Windows may have asked whether to allow B-Side on networks - it needs "Private networks" ticked. Windows Security → Firewall & network protection → Allow an app through firewall.'
+    : 'Check the computer\'s firewall allows B-Side to accept connections.';
+}
+$('qrHelp').addEventListener('toggle', () => { if($('qrHelp').open) loadQrHelp(); });
+$('qrHost').addEventListener('change', async () => {
+  await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({settings:{guest_queue:{enabled: $('qrOn').checked, host: $('qrHost').value}}})});
+  loadQrHelp();
+  lastKey = '~'; poll();
 });
 
 let barTimer;

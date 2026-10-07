@@ -240,6 +240,7 @@ def public_settings():
         "modules": dict(DEFAULTS["modules"], **(CFG.get("modules") or {})),
         "layout": _layout_now(),
         "setup_done": bool(CFG.get("setup_done")),
+        "tour_done": bool(CFG.get("tour_done")),
         "always_on_top": bool(CFG.get("always_on_top")),
         "update_repo": CFG.get("update_repo", ""),
         # the three picks: uri, name, cover - nothing secret
@@ -248,6 +249,7 @@ def public_settings():
                       for p in (CFG.get("playlists") or [])[:3]],
     }
 WAKE_SPOTIFY = threading.Event()   # set after a play/pause/volume press
+FOCUS_HOOK = None                  # the window sets this: "come to the front"
 
 
 def nap(seconds):
@@ -4078,18 +4080,45 @@ def lan_ip():
         s_.close()
 
 
+def _private(ip):
+    return (ip.startswith(("192.168.", "10."))
+            or any(ip.startswith(f"172.{n}.") for n in range(16, 32)))
+
+
+# Addresses that belong to virtual adapters - VMs, Docker, Internet Sharing -
+# which no phone can reach even though they look like home addresses.
+_VIRTUAL = ("192.168.64.", "192.168.65.", "192.168.56.", "192.168.99.",
+            "172.17.", "169.254.")
+
+
+_HOME_IP = {"at": 0.0, "ip": ""}
+
+
 def home_ip():
+    """home_ip, remembered for half a minute - the page asks every second."""
+    if time.time() - _HOME_IP["at"] > 30 or not _HOME_IP["ip"]:
+        _HOME_IP["ip"] = _home_ip()
+        _HOME_IP["at"] = time.time()
+    return _HOME_IP["ip"]
+
+
+def _home_ip():
     """The address phones on your WiFi can reach.
 
-    With a VPN on, the default route goes through the tunnel, so the
-    obvious guess is the VPN's address (e.g. 10.2.0.2), which nothing at
-    home can reach. Prefer the usual home-router ranges instead."""
-    ips = all_ips()
-    for prefix in ("192.168.",) + tuple(f"172.{n}." for n in range(16, 32)) + ("10.",):
-        for ip in ips:
-            if ip.startswith(prefix):
-                return ip
-    return lan_ip()
+    The route out to the internet is usually the WiFi, so its address wins.
+    With a VPN on, though, that route is the tunnel (e.g. 10.2.0.2), which
+    nothing at home can reach - so a 10.x route gives way to a 192.168/172
+    address when the machine has one."""
+    route = lan_ip()
+    cands = [ip for ip in all_ips() if _private(ip) and not ip.startswith(_VIRTUAL)]
+    if route in cands and not route.startswith("10."):
+        return route
+    for ip in cands:
+        if not ip.startswith("10."):
+            return ip
+    if route in cands or (_private(route) and not route.startswith(_VIRTUAL)):
+        return route
+    return cands[0] if cands else route
 
 
 def guest_url():
@@ -4098,15 +4127,55 @@ def guest_url():
 
 
 def all_ips():
-    """Every IPv4 address this machine has, for diagnosing the QR code."""
+    """Every IPv4 address this machine has on a real network adapter."""
     import socket
     out = set()
+    if sys.platform == "darwin":
+        # The hostname lookup on a Mac often misses the WiFi entirely; ask
+        # the adapters directly, and only the physical ones (en0, en1...) -
+        # not VPN tunnels (utun), Internet Sharing (bridge) or VMs.
+        try:
+            import subprocess as _sp
+            txt = _sp.run(["ifconfig"], capture_output=True, text=True, timeout=4).stdout
+            name = ""
+            for line in txt.splitlines():
+                if line and not line[0].isspace():
+                    name = line.split(":", 1)[0]
+                m = re.match(r"\s+inet (\d+\.\d+\.\d+\.\d+)", line)
+                if m and name.startswith("en"):
+                    out.add(m.group(1))
+        except Exception:
+            pass
+    if not out:
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                out.add(info[4][0])
+        except Exception:
+            pass
+    return sorted(ip for ip in out if not ip.startswith("127."))
+
+
+def guest_net():
+    """For the settings page: where the QR points, the choices, and whether
+    this machine actually answers on that address."""
+    import socket
+    port = int(cfg("port", 8765))
+    _HOME_IP["at"] = 0                 # look again - the WiFi may have changed
+    auto = home_ip()
+    pinned = (CFG.get("guest_queue") or {}).get("host") or ""
+    ips = sorted(set(all_ips()) | {auto} | ({pinned} if pinned else set()))
+    using = pinned or auto
+    answers = False
     try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            out.add(info[4][0])
+        with socket.create_connection((using, port), timeout=0.6):
+            answers = True
     except Exception:
         pass
-    return sorted(ip for ip in out if not ip.startswith("127."))
+    return {"url": guest_url(), "auto": auto, "pinned": pinned,
+            "ips": [ip for ip in ips if ip and not ip.startswith("127.")],
+            "answers": answers,
+            "enabled": bool((CFG.get("guest_queue") or {}).get("enabled", True)),
+            "platform": sys.platform}
 
 
 def _spotify_call(method, url, data=None):
@@ -4285,7 +4354,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _guard(self, path):
         """Other devices on the network may only reach the guest page."""
-        if self._is_local() or path in self.GUEST_PATHS or path == "/api/guest/queue":
+        if self._is_local():
+            return True
+        guests_on = bool((CFG.get("guest_queue") or {}).get("enabled", True))
+        if guests_on and (path in self.GUEST_PATHS or path == "/api/guest/queue"):
             return True
         self._send(403, json.dumps({"error": "not available"}))
         return False
@@ -4302,6 +4374,10 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "text/html; charset=utf-8")
             else:
                 self._send(404, "guest.html missing", "text/plain")
+            return
+
+        if path == "/api/guest/net" and self._is_local():
+            self._send(200, json.dumps(guest_net()))
             return
 
         if path == "/api/guest/info":
@@ -4441,6 +4517,19 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             data = {}
 
+        if path == "/api/focus":
+            # A second launch found this copy already running. It leaves; we
+            # step forward, so there's still exactly one B-Side.
+            ok = False
+            if FOCUS_HOOK:
+                try:
+                    FOCUS_HOOK()
+                    ok = True
+                except Exception as e:
+                    log("focus:", e)
+            self._send(200, json.dumps({"ok": ok, "app": "b-side"}))
+            return
+
         if path == "/api/crate/shuffle":
             shuffle_crate()
             self._send(200, json.dumps({"ok": True, "crate": get_state().get("crate")}))
@@ -4536,8 +4625,15 @@ class Handler(BaseHTTPRequestHandler):
             allowed = ("service", "colour", "place", "latitude", "longitude",
                        "country", "auto_location", "football", "guest_queue",
                        "setup_done", "always_on_top", "sport", "modules", "layout",
-                       "update_repo", "playlists")
+                       "update_repo", "playlists", "tour_done")
             clean = {k: v for k, v in patch.items() if k in allowed}
+            if isinstance(clean.get("guest_queue"), dict):
+                # merge, so Save (which only knows on/off) keeps a pinned address
+                gq = dict(CFG.get("guest_queue") or {})
+                gq.update(clean["guest_queue"])
+                if not gq.get("host"):
+                    gq.pop("host", None)
+                clean["guest_queue"] = gq
             if clean.get("auto_location"):
                 got = locate()
                 if got:
@@ -4661,7 +4757,7 @@ def main():
         threading.Thread(target=fn, daemon=True).start()
 
     port = cfg("port", 8765)
-    host = "0.0.0.0" if (CFG.get("guest_queue") or {}).get("enabled") else "127.0.0.1"
+    host = "0.0.0.0"          # the guard lets other devices see the guest page only
     srv = ThreadingHTTPServer((host, port), Handler)
     print(f"\n  Desk dashboard running at http://localhost:{port}")
     print("  Ctrl-C to stop.\n")
