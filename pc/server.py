@@ -3113,6 +3113,10 @@ def ac_loop():
 # Everything optional the dashboard can show, beside the record.
 
 PLAYS_LOG = os.path.join(USER_DIR, "plays.jsonl")
+# Spotify's own record of what played, line for line, keyed on its play time.
+# The listening panel counts from this: only plays Spotify itself counted
+# (30 seconds or more, on any device), never a skip B-Side happened to see.
+SPOTIFY_LOG = os.path.join(USER_DIR, "plays_spotify.jsonl")
 _MOD_CACHE = {}
 
 
@@ -3153,6 +3157,7 @@ def backfill_spotify():
     items = j.get("items") or []
     if not items:
         return 0
+    _keep_spotify_plays(items)
     # Spotify stamps a play when it ends; we stamp it when we first see it, so
     # the same song arrives with two different times. Match on the song as well
     # as the clock, or every track played with B-Side open gets counted twice.
@@ -3183,6 +3188,65 @@ def backfill_spotify():
     if added:
         log(f"history: pulled {added} plays from Spotify")
     return added
+
+
+def _keep_spotify_plays(items):
+    """Copy Spotify's recently-played into its own log, exactly: each play
+    once, keyed on Spotify's played_at, so nothing is counted twice however
+    often we ask."""
+    seen = set()
+    try:
+        with open(SPOTIFY_LOG, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    seen.add(json.loads(line).get("id"))
+                except Exception:
+                    pass
+    except FileNotFoundError:
+        pass
+    new = []
+    for it in items:
+        when = it.get("played_at") or ""
+        if not when or when in seen:
+            continue
+        try:
+            at = calendar.timegm(time.strptime(when[:19], "%Y-%m-%dT%H:%M:%S"))
+        except Exception:
+            continue
+        tr = it.get("track") or {}
+        imgs = ((tr.get("album") or {}).get("images") or [])
+        new.append({"id": when, "title": (tr.get("name") or "").strip(),
+                    "artist": ", ".join(a.get("name", "") for a in (tr.get("artists") or [])),
+                    "album": (tr.get("album") or {}).get("name", ""),
+                    "art": imgs[-1]["url"] if imgs else "",
+                    "ms": int(tr.get("duration_ms") or 0), "at": at})
+        seen.add(when)
+    if new:
+        try:
+            with open(SPOTIFY_LOG, "a", encoding="utf-8") as f:
+                for r in sorted(new, key=lambda r: r["at"]):
+                    f.write(json.dumps(r) + "\n")
+        except Exception as e:
+            log("history: couldn't keep Spotify plays -", e)
+
+
+_TOP_SHORT = {"at": 0.0, "name": None}
+
+
+def _spotify_top_recent():
+    """Spotify's own #1 artist over roughly the last four weeks."""
+    if time.time() - _TOP_SHORT["at"] < 3600:
+        return _TOP_SHORT["name"]
+    name = None
+    try:
+        _, j = _spotify_call("GET", "https://api.spotify.com/v1/me/top/artists"
+                                    "?limit=1&time_range=short_term")
+        items = j.get("items") or []
+        name = (items[0].get("name") or "").strip() or None if items else None
+    except Exception:
+        pass
+    _TOP_SHORT.update(at=time.time(), name=name)
+    return name
 
 
 def apple_library_stats():
@@ -3224,11 +3288,11 @@ def apple_library_stats():
             "top_plays": by_artist.get(top, 0) if top else 0}
 
 
-def _read_plays(days=400):
+def _read_plays(days=400, path=None):
     cutoff = time.time() - days * 86400
     rows = []
     try:
-        with open(PLAYS_LOG, "r", encoding="utf-8") as f:
+        with open(path or PLAYS_LOG, "r", encoding="utf-8") as f:
             for line in f:
                 try:
                     r = json.loads(line)
@@ -3265,7 +3329,11 @@ def history_stats():
     app gets used. Apple Music is different: Music.app has counted every play
     for years, so there the totals are its own."""
     apple = apple_library_stats() if cfg("service") == "apple" else None
-    rows = _read_plays()
+    # With Spotify linked, count Spotify's plays and nothing else. B-Side's own
+    # log notes every song the moment it shows up - skips included, and on
+    # Windows sometimes twice - which is what made the numbers run high.
+    native = cfg("service", "spotify") == "spotify" and _has_stats_scope()
+    rows = _read_plays(path=SPOTIFY_LOG) if native else _read_plays()
     if not rows and not apple:
         return None
 
@@ -3295,18 +3363,19 @@ def history_stats():
     if since <= year_start + 86400:
         spans = "year"
 
+    # On rotation = who you've played most this week, not since the log began.
     counts = {}
-    for r in rows:
+    for r in week:
         k = (r.get("artist") or "").split(",")[0].strip()
         if k:
             counts[k] = counts.get(k, 0) + 1
     artist = max(counts, key=counts.get) if counts else None
     plays = counts.get(artist, 0) if artist else 0
-    top_from = "log"
+    top_from = "week"
     if apple and apple.get("top_artist"):
         artist, plays, top_from = apple["top_artist"], apple["top_plays"], "apple"
     elif plays < 3:                      # too thin to mean anything - ask Spotify
-        spot = _spotify_top_artist()
+        spot = _spotify_top_recent() if native else _spotify_top_artist()
         if spot:
             artist, plays, top_from = spot, 0, "spotify"
 
@@ -3330,6 +3399,7 @@ def history_stats():
            "top_artist": artist, "top_plays": plays, "top_from": top_from,
            "recent": recent,
            "source": "apple" if apple else "spotify",
+           "native": bool(native),
            "linked": bool(apple) or _has_stats_scope()}
     if apple:
         out["all_plays"] = apple["plays"]

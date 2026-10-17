@@ -2439,7 +2439,7 @@ function renderHistory(h){
     tiles = [[h.week, 'last 7 days'], [span(h.mins_week), 'listened']];
   }else{
     tiles = [[h.week, 'plays so far'], [span(h.mins_week), 'listened']];
-    note = 'Counting since ' + new Date(h.since * 1000)
+    note = (h.native ? 'From Spotify, counting since ' : 'Counting since ') + new Date(h.since * 1000)
       .toLocaleDateString(undefined, {day:'numeric', month:'short'}) + '.';
   }
   box.innerHTML = '<h3>Your listening</h3>'
@@ -2447,9 +2447,9 @@ function renderHistory(h){
     + tiles.map(t => '<div class="stat"><b>' + t[0] + '</b><span>' + t[1] + '</span></div>').join('')
     + '</div>'
     + (h.top_artist ? '<div class="mod-line">'
-        + (h.top_from === 'spotify' ? 'Your top artist: ' : 'On rotation: ')
+        + (h.top_from === 'spotify' ? 'Your top artist lately: ' : 'On rotation: ')
         + '<em>' + esc(h.top_artist) + '</em>'
-        + (h.top_plays ? ' · ' + h.top_plays + ' plays' : '') + '</div>' : '')
+        + (h.top_plays ? ' · ' + h.top_plays + (h.top_from === 'week' ? ' plays this week' : ' plays') : '') + '</div>' : '')
     + (note ? '<div class="mod-wait">' + note + '</div>' : '')
     + (h.linked ? '' : relinkLine('to count what you played before B-Side.'))
     + '<div class="mod-rows">' + (h.recent || []).slice(0, 3).map(r =>
