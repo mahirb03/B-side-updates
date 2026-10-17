@@ -1111,6 +1111,8 @@ def spotify_control(action, value=None):
         v = max(0, min(100, int(value)))
         log(f"spotify: volume set to {v} from the dashboard")
         url = f"{base}/volume?volume_percent={v}"
+    elif action == "seek":
+        url = f"{base}/seek?position_ms={max(0, int(value or 0))}"
     else:
         return False, "Unknown control."
     try:
@@ -1501,10 +1503,14 @@ def ytm_control(action, value=None):
             path = {"play": "/api/v1/play", "pause": "/api/v1/pause",
                     "playpause": "/api/v1/toggle-play", "next": "/api/v1/next",
                     "previous": "/api/v1/previous",
-                    "volume": "/api/v1/volume"}.get(action)
+                    "volume": "/api/v1/volume", "seek": "/api/v1/seek-to"}.get(action)
             if path:
-                _ytm_api(path, "POST",
-                         {"volume": int(value or 0)} if action == "volume" else None)
+                body = None
+                if action == "volume":
+                    body = {"volume": int(value or 0)}
+                elif action == "seek":
+                    body = {"seconds": max(0, int(value or 0)) / 1000}
+                _ytm_api(path, "POST", body)
                 return True, ""
     except Exception:
         pass                          # the API plugin may simply be switched off
@@ -1650,6 +1656,11 @@ def _win_control(service, action, value=None):
         s = await _win_session(Mgr, service)
         if s is None:
             return False
+        if action == "seek":
+            # Windows counts in 100-nanosecond ticks. Apps may refuse - then
+            # say so, and Spotify's API gets a go instead.
+            return bool(await s.try_change_playback_position_async(
+                max(0, int(value or 0)) * 10000))
         fn = {"play": s.try_play_async, "pause": s.try_pause_async,
               "playpause": s.try_toggle_play_pause_async,
               "next": s.try_skip_next_async,
@@ -1803,10 +1814,40 @@ def local_control(service, action, value=None):
         _osa(f'tell application "{app}" to next track')
     elif action == "previous":
         _osa(f'tell application "{app}" to previous track')
+    elif action == "seek":
+        secs = max(0.0, int(value or 0) / 1000)
+        _osa(f'tell application "{app}" to set player position to {secs:.2f}')
     else:
         return False, "Unknown control."
     WAKE_SPOTIFY.set()
     return True, ""
+
+
+def seek_to(service, ms):
+    """Spinning the record: jump to a point in the song."""
+    try:
+        ms = max(0, int(ms))
+    except Exception:
+        return False, "No time given."
+    linked = service == "spotify" and bool(_load_tokens().get("refresh_token"))
+    # Spotify's desktop app on Windows doesn't always act on the system's
+    # position change, so there its own API goes first. On a Mac, the app's
+    # AppleScript is instant and needs no Premium.
+    if linked and sys.platform == "win32":
+        ok, msg = spotify_control("seek", ms)
+        if not ok:
+            ok, msg = local_control(service, "seek", ms)
+    else:
+        ok, msg = local_control(service, "seek", ms)
+        if not ok and linked:
+            ok, msg = spotify_control("seek", ms)
+    if ok:
+        np_ = get_state().get("now_playing")
+        if np_:
+            np_ = dict(np_, progress_ms=ms, progress_at=time.time())
+            set_state(now_playing=np_)      # the ring and lyrics jump at once
+        WAKE_SPOTIFY.set()
+    return ok, msg
 
 
 def open_player(service):
@@ -4786,6 +4827,8 @@ class Handler(BaseHTTPRequestHandler):
             if action in ("play", "pause") and get_state().get("now_playing") is None \
                     and not get_state().get("spotify_paused"):
                 ok, msg = open_player(service)          # nothing loaded: just start it
+            elif action == "seek":
+                ok, msg = seek_to(service, value)
             else:
                 ok, msg = local_control(service, action, value)
                 if not ok and service == "spotify" and _load_tokens().get("refresh_token"):

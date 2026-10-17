@@ -176,6 +176,24 @@ body.arting .art{opacity:0}
 }
 .deck:hover .hint-ring{opacity:.35}
 
+/* Spin the record to move through the song */
+.deck.can-scrub{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.deck img{-webkit-user-drag:none;user-drag:none}
+.deck.scrubbing{cursor:grabbing}
+.deck.scrubbing .disc{animation-play-state:paused!important}
+.deck.scrubbing .hint-ring{opacity:.6;border-color:var(--accent)}
+.scrub-tip{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);
+  z-index:6;pointer-events:none;opacity:0;transition:opacity .15s, transform .15s;
+  padding:12px 18px 10px;border-radius:14px;text-align:center;white-space:nowrap;
+  background:rgba(14,12,11,.82);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  box-shadow:0 10px 30px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.08)}
+.scrub-tip.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.scrub-tip b{display:block;font:500 clamp(22px,3.4vmin,34px)/1 var(--sans);
+  color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.scrub-tip b i{font-style:normal;color:var(--ink-3);font-weight:400}
+.scrub-tip span{display:block;margin-top:6px;font-size:clamp(11px,1.3vmin,13px);
+  color:var(--accent);font-variant-numeric:tabular-nums;letter-spacing:.04em}
+
 .disc{
   position:absolute;
   inset:0;
@@ -1352,6 +1370,7 @@ button.status:focus-visible{outline:2px solid var(--pine-hi);outline-offset:2px}
   box-shadow:0 2px 6px rgba(0,0,0,.5);
   color:#2e2a25; z-index:3; pointer-events:none;
 }
+.deck .pwr[hidden]{display:none}
 .deck.power-on .plinth::after,.deck.power-off .plinth::after{display:none}
 .status{margin-left:auto;font-size:11px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
 .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink-3);margin-right:6px;vertical-align:middle}
@@ -1596,6 +1615,7 @@ body.compact.has-art .grooves{opacity:.35}
         <div class="label"><div class="mark" id="labelMark">33&#8531;</div></div>
       </div>
       <div class="spindle"></div>
+      <div class="scrub-tip" id="scrubTip" aria-live="polite"><b id="scrubTime"></b><span id="scrubDelta"></span></div>
       <div class="tonearm" aria-hidden="true">
         <div class="arm"></div>
         <div class="pivot"></div>
@@ -3319,12 +3339,16 @@ const RING_LEN = 2 * Math.PI * 49;
 const ARM_START = 1.9;   // lead-in groove
 const ARM_END = 26.0;    // run-out, near the label
 let prog = null;   // {at, ms, total}
+const SCRUB = {on:false, holdUntil:0};
 
 /* Lyrics only need to know where in the song we are. Windows' media info
    often gives a position but no length, which used to leave the needle AND
    the lyrics without a clock - so the words get one of their own. */
 let lyrClock = null;   // {at, ms}
 function setProgress(np){
+  // While the record is being turned, or just after, the hand's position
+  // wins - a poll from before the jump would yank it back.
+  if(SCRUB.on || Date.now() < SCRUB.holdUntil) return;
   lyrClock = (np && typeof np.progress_ms === 'number')
     ? {at: Date.now(), ms: np.progress_ms + (np.progress_at ? Math.max(0, Date.now() - np.progress_at * 1000) : 0)}
     : null;
@@ -3507,9 +3531,8 @@ function setDeckPower(on){
 }
 function renderLamps(ls){
   ls = ls || [];
-  const dp = pickDeckPlug(ls);
-  if(dp && Date.now() - lampBusy > 4000){ deckPlug = dp; setDeckPower(dp.on); }
-  if(dp) ls = ls.filter(l => l.id !== dp.id);   // it lives on the deck, not in the list
+  // The turntable's plug used to be switched by clicking the record. The
+  // record is for scrubbing now, so the plug sits with the others.
   if(!ls.length){ if(lampSig !== 'none'){ lampSig = 'none'; $('lamps').innerHTML = ''; } return; }
   if(Date.now() - lampBusy < 4000) return;
   const sig = JSON.stringify(ls); if(sig === lampSig) return; lampSig = sig;
@@ -3718,15 +3741,14 @@ $('connectBtn').addEventListener('click', async () => {
 $('guestConnectBtn').addEventListener('click', () => $('connectBtn').click());
 
 // Clicking the record opens the music app and starts it playing.
-async function deckClick(){
-  if(compact){ setCompact(false); return; }
-  if(deckPlug){
-    const on = !deckPlug.on;
-    deckPlug.on = on;
-    setDeckPower(on);
-    lampSend(deckPlug.id, 'power', on);
-    return;
-  }
+// Tapping the record no longer switches the turntable plug or opens the
+// music app - the record is for turning now (below). A tap only brings a
+// shrunk widget back.
+function deckClick(){
+  if(compact){ setCompact(false); }
+}
+// Nothing loaded and Space pressed: start the music app, as before.
+async function startPlayer(){
   $('deck').classList.add('starting');
   try{
     const j = await (await fetch('/api/player/open', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})).json();
@@ -3738,10 +3760,94 @@ function toastDeck(msg){
   $('statusText').textContent = msg || '';
   setTimeout(() => { lastKey = '~'; poll(); }, 4000);
 }
-$('deck').addEventListener('click', deckClick);
-$('deck').addEventListener('keydown', e => {
-  if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); deckClick(); }
+$('deck').addEventListener('click', e => { if(!SCRUB.moved) deckClick(); });
+
+/* ---------------- spin the record to scrub ----------------
+   Grab the record and turn it: clockwise goes forward, anticlockwise back,
+   one full turn = one minute. The time shows in the middle while you turn;
+   letting go jumps the song there. */
+const SCRUB_MS_PER_TURN = 60000;
+const fmtT = ms => { const t = Math.max(0, Math.round(ms / 1000));
+  return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
+function scrubNow(){
+  return prog ? Math.max(0, Math.min(prog.total, prog.ms + (document.body.classList.contains('playing') ? Date.now() - prog.at : 0))) : null;
+}
+function angleAt(e){
+  const r = $('deck').querySelector('.disc').getBoundingClientRect();
+  return Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)) * 180 / Math.PI;
+}
+function paintScrub(){
+  const target = SCRUB.target, d = target - SCRUB.from;
+  $('scrubTime').innerHTML = fmtT(target) + ' <i>/ ' + fmtT(prog.total) + '</i>';
+  $('scrubDelta').textContent = Math.abs(d) < 500 ? '' : (d > 0 ? '+' : '−') + fmtT(Math.abs(d));
+  // the ring, arm and lyrics follow the hand
+  prog = {at: Date.now(), ms: target, total: prog.total};
+  lyrClock = {at: Date.now(), ms: target};
+  drawRing();
+  if(typeof paintLyrics === 'function') paintLyrics();
+  // the record turns with the hand
+  const anim = $('deck').querySelector('.disc').getAnimations()[0];
+  if(anim && SCRUB.anim0 != null){
+    const dur = 4200;
+    anim.currentTime = ((SCRUB.anim0 + SCRUB.turned / 360 * dur) % dur + dur) % dur;
+  }
+}
+$('deck').addEventListener('pointerdown', e => {
+  SCRUB.moved = false;
+  if(e.button !== 0 || compact || !prog || !prog.total) return;
+  // no text selection, no dragging the cover image - either one makes the
+  // browser cancel the turn halfway
+  if(e.pointerType === 'mouse') e.preventDefault();
+  try{ getSelection().removeAllRanges(); }catch(_){}
+  const anim = $('deck').querySelector('.disc').getAnimations()[0];
+  Object.assign(SCRUB, {id: e.pointerId, last: angleAt(e), turned: 0, x: e.clientX, y: e.clientY,
+    from: scrubNow(), target: scrubNow(), anim0: anim ? Number(anim.currentTime) || 0 : null, armed: true});
 });
+$('deck').addEventListener('pointermove', e => {
+  if(!SCRUB.armed || e.pointerId !== SCRUB.id) return;
+  const a = angleAt(e);
+  let d = a - SCRUB.last;
+  if(d > 180) d -= 360; else if(d < -180) d += 360;
+  SCRUB.last = a;
+  SCRUB.turned += d;
+  if(!SCRUB.on){
+    // a few degrees of turn before it counts, so a tap stays a tap
+    if(Math.abs(SCRUB.turned) < 6 && Math.hypot(e.clientX - SCRUB.x, e.clientY - SCRUB.y) < 8) return;
+    SCRUB.on = true; SCRUB.moved = true;
+    try{ $('deck').setPointerCapture(e.pointerId); }catch(_){}
+    $('deck').classList.add('scrubbing');
+    $('scrubTip').classList.add('on');
+  }
+  e.preventDefault();
+  SCRUB.target = Math.max(0, Math.min(prog.total - 1000, SCRUB.from + SCRUB.turned / 360 * SCRUB_MS_PER_TURN));
+  paintScrub();
+});
+async function endScrub(e){
+  if(!SCRUB.armed || (e && e.pointerId !== SCRUB.id)) return;
+  SCRUB.armed = false;
+  if(!SCRUB.on) return;
+  SCRUB.on = false;
+  SCRUB.holdUntil = Date.now() + 2500;      // let the player catch up first
+  $('deck').classList.remove('scrubbing');
+  const target = Math.round(SCRUB.target);
+  setTimeout(() => $('scrubTip').classList.remove('on'), 650);
+  try{
+    const j = await (await fetch('/api/spotify/control', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'seek', value:target})})).json();
+    if(!j.ok){
+      SCRUB.holdUntil = 0;
+      $('scrubDelta').textContent = j.message || 'Couldn\'t move the song there.';
+      $('scrubTip').classList.add('on');
+      setTimeout(() => $('scrubTip').classList.remove('on'), 2200);
+    }
+  }catch(_){ SCRUB.holdUntil = 0; }
+  lastKey = '~'; setTimeout(poll, 600);
+}
+$('deck').addEventListener('pointerup', endScrub);
+$('deck').addEventListener('pointercancel', endScrub);
+// A song with a length is one you can turn through.
+setInterval(() => $('deck').classList.toggle('can-scrub', !!(prog && prog.total)), 1000);
 
 /* ---------------- widget chrome ---------------- */
 if(new URLSearchParams(location.search).get('widget') === '1'){
@@ -3883,7 +3989,7 @@ document.addEventListener('keydown', e => {
       e.preventDefault();               // no page scroll, no double-press of a focused button
       if(e.repeat) return;              // holding space: one toggle, not a stutter
       if(!$('ctl').hidden) $('ctlPlay').click();
-      else deckClick();                 // nothing loaded: start the player, as a click would
+      else startPlayer();               // nothing loaded: start the music app
       return;
     }
   }
@@ -3910,6 +4016,7 @@ function shortcutsHTML(){
     [['F'], 'Fullscreen'],
   ];
   if(!$('crateBtn').hidden) rows.push([['C'], 'Your record crate']);
+  rows.push([['Drag'], 'Turn the record to rewind or fast-forward']);
   rows.push([['Esc'], 'Back out of whatever is open']);
   rows.push([['?'], 'This list, any time']);
   return '<div class="keys">' + rows.map(([ks, what]) =>
@@ -3917,14 +4024,14 @@ function shortcutsHTML(){
   ).join('') + '</div>';
 }
 function tourSteps(){
-  const plug = $('pwr') && !$('pwr').hidden;
   return [
     {title:'Welcome to B-Side', wide:true,
      body:'<p>Whatever you\'re playing, on a turntable - with the clock, weather and the rest around it.</p><p>Quick look round? Takes half a minute.</p>',
      next:'Show me'},
     {sel:'#deck', title:'The record',
-     body:'<p>Your music spins here, with the cover on the label. Click it to play or pause' +
-          (plug ? ' - or, with nothing on, to switch the turntable on.' : ', or to open your music app when nothing\'s on.') + '</p>'},
+     body:'<p>Your music spins here, with the cover on the label.</p>' +
+          '<p><b>Grab it and turn it</b> to move through the song - clockwise to go forward, back the other way to rewind. ' +
+          'The time shows as you turn; let go and the song jumps there. One full turn is a minute.</p>'},
     {sel:'.track', title:'What\'s playing', pad:10,
      body:'<p>Song, artist and who made it. <b>Lyrics</b> swaps the record for words that follow along, when the song has them.</p>'},
     {sel:'#ctl', title:'Controls', pad:8,
