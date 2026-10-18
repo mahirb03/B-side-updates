@@ -349,7 +349,11 @@ def weather_loop():
 # last result) work fully — and they cover every competition, internationals
 # included, without having to know which league a match is in.
 
-SDB = "https://www.thesportsdb.com/api/v1/json/3/"
+# TheSportsDB's free key. The old one ("3") was switched off for good in
+# October 2026 - every call came back as a notice instead of matches, and the
+# sport panel quietly went blank. "123" is their new free key; a paid key can
+# go in config.json as "sportsdb_key".
+SDB = "https://www.thesportsdb.com/api/v1/json/%s/" % (str(cfg("sportsdb_key") or "123").strip())
 TEAM_CACHE = os.path.join(USER_DIR, "teams_cache.json")
 MATCH_CACHE = os.path.join(USER_DIR, "matches_cache.json")
 
@@ -699,8 +703,10 @@ def football_loop():
         def clean(lst):
             return [{k: v for k, v in m.items() if k != "_sort"} for m in lst]
         set_state(football={"live": clean(live), "recent": clean(recent),
-                            "upcoming": clean(upcoming), "error": None})
+                            "upcoming": clean(upcoming), "error": sweep_error[0]})
         return live
+
+    sweep_error = [None]
 
     teams = followed_teams(conf)
     log(f"football: following {len(teams)} teams")
@@ -739,10 +745,13 @@ def football_loop():
         if time.time() - last_full >= refresh or not rows:
             # Full sweep: every team's last result and next fixture.
             fresh = {}
+            answered = 0           # calls that came back as real data
             for i, (name, tid) in enumerate(teams):
                 for endpoint in ("eventslast.php", "eventsnext.php"):
                     try:
                         j = fetch_json(f"{SDB}{endpoint}?id={tid}", timeout=30)
+                        if isinstance(j, dict):
+                            answered += 1
                         for ev in (j.get("results") or j.get("events") or []):
                             if (ev.get("strSport") or "Soccer").lower() != "soccer":
                                 continue
@@ -757,8 +766,18 @@ def football_loop():
                 # whatever was shown before, so nothing blinks out).
                 if i % 3 == 2:
                     publish(dict(rows, **fresh))
-            rows = fresh
             last_full = time.time()
+            if not answered and teams:
+                # Not one team answered: the service is down or has changed.
+                # Keep showing what we had rather than wiping it - and never
+                # overwrite the saved matches with nothing.
+                sweep_error[0] = "Couldn't reach the football results service."
+                log("football: no answers from TheSportsDB - keeping the last matches")
+                publish(rows)
+                time.sleep(min(refresh, 300))
+                continue
+            sweep_error[0] = None
+            rows = fresh
             try:
                 with open(MATCH_CACHE, "w", encoding="utf-8") as f:
                     json.dump({str(k): {kk: vv for kk, vv in m.items() if kk != "_sort"}
