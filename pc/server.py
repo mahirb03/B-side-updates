@@ -2796,11 +2796,16 @@ def sb_control(action):
 LIGHT_CATS = ("dj", "dd", "fwd", "xdd", "dc", "fsd", "tgq", "tgkg", "cz", "pc", "kg")
 _LAMPS = {}          # id -> {"name", "codes"}
 
+def _hidden_device(did, name):
+    """Devices listed under "hide_devices" in config.json (by name or id) are left out."""
+    hide = {str(x).strip().lower() for x in (cfg("hide_devices") or [])}
+    return str(did or "").lower() in hide or str(name or "").strip().lower() in hide
+
 def lamps_find():
     r = _tuya_req("GET", "/v2.0/cloud/thing/device?page_size=20")
     devs = r if isinstance(r, list) else (r or {}).get("list", [])
     for d in devs:
-        if d.get("category") in LIGHT_CATS and d["id"] not in _LAMPS:
+        if d.get("category") in LIGHT_CATS and d["id"] not in _LAMPS and not _hidden_device(d["id"], d.get("name")):
             f = _tuya_req("GET", f"/v1.0/iot-03/devices/{d['id']}/functions") or {}
             codes = {x.get("code"): x for x in f.get("functions", [])}
             _LAMPS[d["id"]] = {"name": d.get("name") or "Plug", "codes": codes,
@@ -3071,7 +3076,7 @@ def st_find():
     j = _st("GET", "/devices")
     for d in j.get("items", []):
         caps = {c.get("id") for comp in d.get("components", []) for c in comp.get("capabilities", [])}
-        if "switch" in caps and d["deviceId"] not in _ST:
+        if "switch" in caps and d["deviceId"] not in _ST and not _hidden_device(d["deviceId"], d.get("label") or d.get("name")):
             light = "switchLevel" in caps or "colorTemperature" in caps
             cat = " ".join(c.get("name", "") for comp in d.get("components", [])
                            for c in comp.get("categories", [])).lower()
@@ -3987,6 +3992,16 @@ def _lrclib(path, params):
         return json.loads(r.read().decode() or "null")
 
 
+_CENSOR = re.compile(r"(?:(?<=\s)|^)[\u2013\u2014-](?=[\s,.!?)'\"]|$)|\*{2,}|\w\*+\w", re.M)
+
+
+def _censored(hit):
+    """How many words a lyrics entry has blanked out (radio edits)."""
+    if not hit:
+        return 0
+    return len(_CENSOR.findall(hit.get("syncedLyrics") or hit.get("plainLyrics") or ""))
+
+
 def fetch_lyrics(np_):
     artist = (np_.get("artist") or "").split(",")[0].strip()
     title = _clean_title(np_.get("title") or "")
@@ -4006,16 +4021,21 @@ def fetch_lyrics(np_):
             raise
     except Exception:
         raise
-    if not hit:                            # then a looser search
+    # Some uploads to LRCLIB are the radio edit, with words blanked out as
+    # dashes or asterisks. If the exact match is one of those, look through
+    # the other versions of the song for the uncensored words.
+    if not hit or _censored(hit):
         try:
             res = _lrclib("search", {"track_name": title, "artist_name": artist}) or []
-            for r in res[:5]:
-                if not dur or abs((r.get("duration") or 0) - dur) <= 8:
-                    hit = r
-                    break
-            if not hit and res:
-                hit = res[0]
         except Exception:
+            res = []
+        near = [r for r in res[:10] if not dur or abs((r.get("duration") or 0) - dur) <= 8] or res[:5]
+        pool = ([hit] if hit else []) + near
+        if pool:
+            # fewest blanked words wins; then synced over plain; then the exact match
+            hit = min(pool, key=lambda r: (_censored(r), not r.get("syncedLyrics"),
+                                           pool.index(r)))
+        elif not hit:
             return None
     if not hit or hit.get("instrumental"):
         return {"lines": [], "plain": [], "instrumental": bool(hit and hit.get("instrumental"))}
