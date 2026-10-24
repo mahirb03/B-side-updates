@@ -58,6 +58,7 @@ body{
 }
 .centre{
   order:-1;            /* stacked: record leads */
+  position:relative;   /* the lyrics sit exactly where the record was */
   display:flex;
   flex-direction:column;
   align-items:center;
@@ -908,11 +909,14 @@ body.goal-on .wrap{filter:brightness(.5);transition:filter .3s}
      underneath (~210px) is paid for. The live-banner case is below. */
   width:min(84vw,78vmin);height:max(180px, min(70vh, 78vmin, calc(100vh - 210px)));min-height:0;
   display:flex;align-items:stretch;
+  /* Laid over the record's own space (sized in fitLyrics), so the title and
+     the Lyrics/Record button below don't move when you switch. */
+  position:absolute;left:50%;top:0;transform:translateX(-50%);z-index:2;
   -webkit-app-region:no-drag;
 }
 .lyr-stage[hidden]{display:none}
 body.has-live .lyr-stage{height:max(180px, min(70vh, 78vmin, calc(100vh - 210px - var(--md-h, 0px) - var(--md-top) - 18px)))}
-body.lyrics-on .stack{display:none}
+body.lyrics-on .stack{visibility:hidden}
 
 .lyr-scroll{
   position:relative;width:100%;height:100%;overflow-y:auto;overscroll-behavior:contain;
@@ -2843,15 +2847,11 @@ setInterval(paintLyrics, 100);
 function fitLyrics(){
   const st = $('lyrStage');
   if(!st || st.hidden) return;
-  const track = document.querySelector('.track');
-  const gap = parseFloat(getComputedStyle(document.querySelector('.centre')).rowGap) || 24;
-  // The page's real padding, not a guess: during a live match the top
-  // padding grows by the banner's height, and the words have to give way.
-  const ws = getComputedStyle(document.querySelector('.wrap'));
-  const pad = (parseFloat(ws.paddingTop) || 0) + (parseFloat(ws.paddingBottom) || 0);
-  const room = innerHeight - (track ? track.offsetHeight : 160) - gap - pad - 8;
-  const cap = Math.min(innerHeight * 0.7, Math.min(innerWidth, innerHeight) * 0.78);
-  st.style.height = Math.max(120, Math.min(cap, room)) + 'px';
+  // Take the record's exact box: the record stays in the layout (just
+  // invisible), so nothing under it shifts when lyrics open or close.
+  const sk = $('stack');
+  st.style.top = sk.offsetTop + 'px';
+  st.style.height = Math.max(120, sk.offsetHeight) + 'px';
 }
 addEventListener('resize', fitLyrics);
 
