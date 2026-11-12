@@ -1765,17 +1765,30 @@ def _spotify_art_now(title):
         return ""
 
 
-def art_for(artist, title, album):
-    """Apple Music's AppleScript won't hand over artwork, so look it up."""
-    key = (artist + "|" + (album or title)).lower()
-    if key in _ART_LOOKUP:
-        return _ART_LOOKUP[key]
-    # Spotify first when it's the one playing: its cover is exact, where an
-    # iTunes search misses smaller artists entirely and the label came up blank.
-    url = _spotify_art_now(title)
-    if url:
-        _ART_LOOKUP[key] = url
-        return url
+def _norm_t(t):
+    return re.sub(r"[^a-z0-9]", "", (t or "").lower())
+
+
+def _spotify_art_search(artist, title):
+    """Spotify's own catalogue: has small artists that iTunes doesn't."""
+    if not _load_tokens().get("refresh_token"):
+        return ""
+    try:
+        first = (artist or "").split(",")[0].split("&")[0].strip()
+        q = urllib.parse.quote(f'track:"{title}" artist:"{first}"')
+        _, j = _spotify_call("GET", "https://api.spotify.com/v1/search?type=track&limit=5&q=" + q)
+        items = (j.get("tracks") or {}).get("items") or []
+        items.sort(key=lambda t: _norm_t(t.get("name")) != _norm_t(title))   # exact title first
+        for t in items:
+            imgs = (t.get("album") or {}).get("images") or []
+            if imgs:
+                return imgs[0].get("url", "")
+    except Exception:
+        pass
+    return ""
+
+
+def _itunes_art(artist, title, album):
     try:
         first = (artist or "").split(",")[0].split("&")[0].strip()
         q = urllib.parse.quote(f"{first} {album or title}")
@@ -1785,10 +1798,46 @@ def art_for(artist, title, album):
         with urllib.request.urlopen(req, timeout=10) as r:
             res = json.loads(r.read().decode()).get("results") or []
         if res and res[0].get("artworkUrl100"):
-            url = res[0]["artworkUrl100"].replace("100x100bb", "1000x1000bb")
+            return res[0]["artworkUrl100"].replace("100x100bb", "1000x1000bb")
     except Exception:
         pass
-    _ART_LOOKUP[key] = url
+    return ""
+
+
+def _deezer_art(artist, title):
+    try:
+        first = (artist or "").split(",")[0].split("&")[0].strip()
+        q = urllib.parse.quote(f'artist:"{first}" track:"{title}"')
+        req = urllib.request.Request(f"https://api.deezer.com/search?limit=3&q={q}",
+                                     headers={"User-Agent": "b-side/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            res = json.loads(r.read().decode()).get("data") or []
+        for t in res:
+            u = (t.get("album") or {}).get("cover_xl")
+            if u:
+                return u
+    except Exception:
+        pass
+    return ""
+
+
+def art_for(artist, title, album):
+    """Find a cover when the player didn't hand one over. Only a found cover
+    is remembered: a miss (say Spotify hadn't caught up with the track change
+    yet) used to be cached too, leaving that song with a blank record for good."""
+    key = (artist + "|" + (album or title)).lower()
+    if _ART_LOOKUP.get(key):
+        return _ART_LOOKUP[key]
+    # Spotify first when it's the one playing: its cover is exact.
+    url = _spotify_art_now(title)
+    if not url and cfg("service", "spotify") == "spotify":
+        url = _spotify_art_search(artist, title)
+    if not url:
+        url = _itunes_art(artist, title, album)
+    if not url:
+        url = _deezer_art(artist, title)
+    if url:
+        _ART_LOOKUP[key] = url
     return url
 
 
@@ -1801,14 +1850,20 @@ def art_soon(artist, title, album):
         return _ART_LOOKUP[key]
 
     def fill():
-        try:
-            url = art_for(artist, title, album)
-        except Exception:
-            return
-        cur = get_state().get("now_playing") or {}
-        if url and cur.get("title") == title and cur.get("artist") == artist \
-                and not cur.get("art"):
-            set_state(now_playing=dict(cur, art=url))
+        # Right after a track change Spotify can still report the last song,
+        # so a miss is tried again a few times before giving up.
+        for wait in (0, 3, 8, 20):
+            time.sleep(wait)
+            cur = get_state().get("now_playing") or {}
+            if cur.get("title") != title or cur.get("artist") != artist or cur.get("art"):
+                return                       # moved on, or a cover already arrived
+            try:
+                url = art_for(artist, title, album)
+            except Exception:
+                url = ""
+            if url:
+                set_state(now_playing=dict(cur, art=url))
+                return
 
     threading.Thread(target=fill, daemon=True).start()
     return ""
