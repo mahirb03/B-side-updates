@@ -2327,6 +2327,14 @@ def identify_now():
     return None, f"no match at {stamp}"
 
 
+_LISTEN_SNOOZE = [0.0]   # time.time() until which the mic stays quiet
+
+
+def _is_heard(np_):
+    """A track the mic identified, rather than one a player reported."""
+    return bool(np_) and np_.get("source") in ("shazam", "mic", "audd")
+
+
 def listen_loop():
     try:
         _listen_loop()
@@ -2375,6 +2383,10 @@ def _listen_loop():
         try:
             # Spotify knows better than the mic ever will.
             if get_state().get("spotify_playing"):
+                nap(interval)
+                continue
+            if time.time() < _LISTEN_SNOOZE[0]:          # paused from the app
+                set_state(listen_note="paused")
                 nap(interval)
                 continue
 
@@ -4928,6 +4940,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/spotify/control":
             action, value = data.get("action"), data.get("value")
             service = cfg("service", "spotify")
+            if action == "pause" and _is_heard(get_state().get("now_playing")):
+                # A song the mic heard isn't playing in any app: pausing used
+                # to send play/pause to Spotify and start it. Clear it instead,
+                # and keep the mic quiet for a while.
+                _LISTEN_SNOOZE[0] = time.time() + 10 * 60
+                set_state(now_playing=None)
+                self._send(200, json.dumps({"ok": True, "message": "Cleared the song the mic heard"}))
+                return
             if action in ("play", "pause") and get_state().get("now_playing") is None \
                     and not get_state().get("spotify_paused"):
                 ok, msg = open_player(service)          # nothing loaded: just start it
