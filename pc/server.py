@@ -4553,6 +4553,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     GUEST_PATHS = ("/guest", "/api/guest/search", "/api/guest/info")
+    # Couch TV's turntable player on the living-room TV: only the addresses in "tv_view" -> "allow"
+    # in config.json may use these, and only these. Settings, sign-ins and updates stay on this computer.
+    TV_PATHS = ("/api/state", "/api/qr.svg", "/api/crate/shuffle")
+
+    def _tv_ok(self, path):
+        tv = CFG.get("tv_view") or {}
+        return (bool(tv.get("enabled")) and path in self.TV_PATHS
+                and self.client_address[0] in (tv.get("allow") or []))
 
     def _is_local(self):
         return self.client_address[0] in ("127.0.0.1", "::1")
@@ -4563,6 +4571,8 @@ class Handler(BaseHTTPRequestHandler):
             return True
         guests_on = bool((CFG.get("guest_queue") or {}).get("enabled", True))
         if guests_on and (path in self.GUEST_PATHS or path == "/api/guest/queue"):
+            return True
+        if self._tv_ok(path):
             return True
         self._send(403, json.dumps({"error": "not available"}))
         return False
